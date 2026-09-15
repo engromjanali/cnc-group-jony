@@ -82,6 +82,7 @@ INSTALLED_APPS = [
     # Local
     'accounts',
     'core',
+    'designs',
 ]
 
 MIDDLEWARE = [
@@ -208,6 +209,13 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
+
+# User-uploaded files (design images/cutting files). Vercel's filesystem is
+# read-only in production, so this only persists in local development —
+# swap the default storage for cloud object storage (S3/R2) before deploying.
+MEDIA_URL = 'media/'
+MEDIA_ROOT = BASE_DIR / 'media'
+
 STORAGES = {
     'default': {
         'BACKEND': 'django.core.files.storage.FileSystemStorage',

@@ -1,4 +1,5 @@
 from rest_framework import generics, permissions
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 
 from .models import Category, Design, SubCategory
@@ -48,6 +49,33 @@ class AdminSubCategoryCreateView(generics.CreateAPIView):
     queryset = SubCategory.objects.all()
     serializer_class = SubCategorySerializer
     permission_classes = [permissions.IsAdminUser]
+
+
+class DesignPagination(PageNumberPagination):
+    page_size = 20
+    page_size_query_param = 'page_size'
+    max_page_size = 100
+
+
+class AdminDesignListView(generics.ListAPIView):
+    """GET /api/v1/admin/design/list?search=&category=&page="""
+
+    serializer_class = DesignDetailSerializer
+    permission_classes = [permissions.IsAdminUser]
+    pagination_class = DesignPagination
+
+    def get_queryset(self):
+        queryset = Design.objects.select_related('category', 'sub_category').all()
+
+        category_id = self.request.query_params.get('category')
+        if category_id:
+            queryset = queryset.filter(category_id=category_id)
+
+        search = self.request.query_params.get('search')
+        if search:
+            queryset = queryset.filter(title__icontains=search)
+
+        return queryset
 
 
 class AdminDesignAddView(generics.CreateAPIView):

@@ -83,6 +83,7 @@ INSTALLED_APPS = [
     'accounts',
     'core',
     'designs',
+    'storage',
 ]
 
 MIDDLEWARE = [
@@ -224,6 +225,22 @@ STORAGES = {
         'BACKEND': 'whitenoise.storage.CompressedManifestStaticFilesStorage',
     },
 }
+
+
+# Direct-to-provider storage (see storage/ app). File bytes never pass through
+# this backend — Vercel functions cap request bodies — so the app talks to
+# Cloudinary and R2 itself using credentials/signatures issued here.
+
+# Public preview images: signed direct upload to Cloudinary.
+CLOUDINARY_CLOUD_NAME = os.environ.get('CLOUDINARY_CLOUD_NAME', '')
+CLOUDINARY_API_KEY = os.environ.get('CLOUDINARY_API_KEY', '')
+CLOUDINARY_API_SECRET = os.environ.get('CLOUDINARY_API_SECRET', '')
+
+# Private design files: private R2 bucket, reachable only via presigned URLs.
+R2_ACCOUNT_ID = os.environ.get('R2_ACCOUNT_ID', '')
+R2_ACCESS_KEY_ID = os.environ.get('R2_ACCESS_KEY_ID', '')
+R2_SECRET_ACCESS_KEY = os.environ.get('R2_SECRET_ACCESS_KEY', '')
+R2_BUCKET = os.environ.get('R2_BUCKET', '')
 
 
 # Email

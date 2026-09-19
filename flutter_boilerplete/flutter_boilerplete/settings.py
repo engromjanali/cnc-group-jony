@@ -227,11 +227,12 @@ STORAGES = {
 }
 
 
-# Direct-to-provider storage (see storage/ app). File bytes never pass through
-# this backend — Vercel functions cap request bodies — so the app talks to
-# Cloudinary and R2 itself using credentials/signatures issued here.
+# External file storage (see storage/ app). Designs are added in one multipart
+# request and this backend uploads the files itself, so the credentials below
+# only ever live here. Requests are capped at ~4.5 MB by Vercel, which is why
+# storage.config.MAX_DESIGN_UPLOAD_BYTES is set just under it.
 
-# Public preview images: signed direct upload to Cloudinary.
+# Public preview images: uploaded to Cloudinary with the API secret.
 CLOUDINARY_CLOUD_NAME = os.environ.get('CLOUDINARY_CLOUD_NAME', '')
 CLOUDINARY_API_KEY = os.environ.get('CLOUDINARY_API_KEY', '')
 CLOUDINARY_API_SECRET = os.environ.get('CLOUDINARY_API_SECRET', '')
@@ -241,6 +242,12 @@ R2_ACCOUNT_ID = os.environ.get('R2_ACCOUNT_ID', '')
 R2_ACCESS_KEY_ID = os.environ.get('R2_ACCESS_KEY_ID', '')
 R2_SECRET_ACCESS_KEY = os.environ.get('R2_SECRET_ACCESS_KEY', '')
 R2_BUCKET = os.environ.get('R2_BUCKET', '')
+
+# Shared secret for the storage cleanup cron job (storage/urls.py). Vercel
+# sends it back as `Authorization: Bearer <value>` on every invocation - see
+# storage/views.py:CleanupView for why that can't go through DRF's normal
+# JWT authentication.
+CRON_SECRET = os.environ.get('CRON_SECRET', '')
 
 
 # Email

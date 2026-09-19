@@ -9,6 +9,7 @@ from .views import (
     AdminSubCategoryCreateView,
     CategoryListView,
     DesignDetailView,
+    DesignDownloadUrlView,
     SubCategoryListView,
 )
 
@@ -22,4 +23,9 @@ urlpatterns = [
     path('admin/design/update/<int:pk>', AdminDesignUpdateView.as_view(), name='admin-design-update'),
     path('admin/design/delete/<int:pk>', AdminDesignDeleteView.as_view(), name='admin-design-delete'),
     path('design/details/<int:pk>', DesignDetailView.as_view(), name='design-details'),
+    path(
+        'design/<int:pk>/download-url',
+        DesignDownloadUrlView.as_view(),
+        name='design-download-url',
+    ),
 ]

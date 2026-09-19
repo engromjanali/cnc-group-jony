@@ -1,0 +1,13 @@
+{
+  "rules": [
+    {
+      "allowed": {
+        "origins": [
+          "https://cncgroupjony.web.app",
+          "http://localhost:55915"
+        ],
+        "methods": ["GET"]
+      }
+    }
+  ]
+}

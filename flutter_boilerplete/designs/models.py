@@ -1,5 +1,7 @@
 from django.db import models
 
+from storage.models import StoredFile
+
 
 class Category(models.Model):
     label = models.CharField(max_length=100, unique=True)
@@ -29,9 +31,20 @@ class Design(models.Model):
         SubCategory, related_name='designs', on_delete=models.SET_NULL, null=True, blank=True,
     )
     title = models.CharField(max_length=255)
+    # Preview image uploaded straight to Cloudinary. Takes precedence over the
+    # legacy `image` / `image_url` fields, which only older designs still use.
+    image_file = models.ForeignKey(
+        StoredFile, related_name='+', on_delete=models.SET_NULL, null=True, blank=True,
+    )
     image = models.ImageField(upload_to='designs/images/', blank=True, null=True)
     image_url = models.URLField(blank=True, default='')
     description = models.TextField(blank=True, default='')
+    # Cutting file in private R2. Takes precedence over the legacy
+    # `design_file` / `design_file_url` fields, which only older designs use.
+    # Downloads always go through a fresh short-lived presigned URL.
+    design_stored_file = models.ForeignKey(
+        StoredFile, related_name='+', on_delete=models.SET_NULL, null=True, blank=True,
+    )
     design_file = models.FileField(upload_to='designs/files/', blank=True, null=True)
     design_file_url = models.URLField(blank=True, default='')
     design_file_name = models.CharField(max_length=255, blank=True, default='')

@@ -6,13 +6,14 @@ from unittest.mock import MagicMock, patch
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ImproperlyConfigured
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.db.models import ProtectedError
 from django.test import override_settings
 from django.urls import reverse
 from django.utils import timezone
 from PIL import Image
 from rest_framework.test import APITestCase
 
-from designs.models import Category, Design
+from designs.models import Category, Design, SubCategory
 
 from . import config
 from .cleanup import run_cleanup
@@ -441,3 +442,244 @@ class CleanupViewTests(APITestCase):
 
     def test_run_cleanup_is_directly_callable(self):
         self.assertEqual(run_cleanup(), {'orphanedDeleted': 0})
+
+
+@override_settings(CLOUDINARY_CLOUD_NAME='demo-cloud')
+class CategoryTests(_ProvidersMixin, APITestCase):
+    def setUp(self):
+        super().setUp()
+        self.admin = User.objects.create_user('admin@example.com', 'pw-1', is_staff=True)
+        self.customer = User.objects.create_user('customer@example.com', 'pw-3')
+        self.client.force_authenticate(self.admin)
+
+    def _add(self, label='Beds', **overrides):
+        data = {'label': label, 'image': _image_file(), **overrides}
+        data = {key: value for key, value in data.items() if value is not None}
+        return self.client.post(reverse('admin-category-add'), data, format='multipart')
+
+    def _patch(self, category, **data):
+        return self.client.patch(
+            reverse('admin-category-update', args=[category.id]), data, format='multipart',
+        )
+
+    def _delete(self, category):
+        return self.client.delete(reverse('admin-category-delete', args=[category.id]))
+
+    def _category_with_image(self, label='Beds', priority=None):
+        response = self._add(label, priority=priority)
+        self.assertEqual(response.status_code, 201, response.data)
+        self.providers.stored.clear()
+        return Category.objects.get(pk=response.data['id'])
+
+    def _design_in(self, category):
+        return Design.objects.create(
+            category=category, title='Panel', image_url='https://example.com/p.png',
+        )
+
+    # --- add ---------------------------------------------------------------
+
+    def test_add_stores_the_image_and_priority(self):
+        response = self._add('Beds', priority=2)
+
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data['priority'], 2)
+        self.assertIn('res.cloudinary.com/demo-cloud', response.data['image_url'])
+        self.assertEqual(response.data['design_count'], 0)
+        self.assertTrue(response.data['can_delete'])
+        category = Category.objects.get(pk=response.data['id'])
+        self.assertEqual(category.image_file.provider, StoredFile.Provider.CLOUDINARY)
+        self.assertEqual([p for p, *_ in self.providers.stored], ['cloudinary'])
+
+    def test_a_new_category_needs_an_image(self):
+        response = self._add(image=None)
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('image', response.data)
+        self.assertFalse(Category.objects.exists())
+
+    def test_priority_is_optional(self):
+        response = self._add('Beds')
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertIsNone(response.data['priority'])
+
+    def test_rejects_a_bad_image_and_a_negative_priority(self):
+        fake = SimpleUploadedFile('a.png', b'not an image', content_type='image/png')
+        self.assertEqual(self._add(image=fake).status_code, 400)
+        self.assertEqual(self._add(image=_image_file('a.bmp', 'BMP')).status_code, 400)
+        self.assertEqual(self._add(priority=-1).status_code, 400)
+        self.assertEqual(self.providers.stored, [])
+        self.assertFalse(Category.objects.exists())
+
+    def test_label_must_be_unique_ignoring_case(self):
+        self._category_with_image('Beds')
+        response = self._add('beds')
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(self.providers.stored, [])
+
+    def test_a_failed_save_removes_the_uploaded_image(self):
+        with patch('designs.serializers.Category.objects.create', side_effect=RuntimeError('db down')):
+            with self.assertRaises(RuntimeError):
+                self._add()
+        self.assertEqual(len(self.providers.stored), 1)
+        self.assertEqual(len(self.providers.deleted), 1)
+        self.assertFalse(StoredFile.objects.exists())
+
+    def test_only_staff_can_add_edit_or_delete(self):
+        category = self._category_with_image()
+        self.client.force_authenticate(self.customer)
+
+        self.assertEqual(self._add('Doors').status_code, 403)
+        self.assertEqual(self._patch(category, label='X').status_code, 403)
+        self.assertEqual(self._delete(category).status_code, 403)
+        self.assertTrue(Category.objects.filter(pk=category.pk).exists())
+
+    # --- list ordering -------------------------------------------------------
+
+    def test_list_orders_by_priority_lowest_first_with_unset_last(self):
+        for label, priority in [('Zeta', None), ('Alpha', None), ('Third', 3), ('First', 1), ('Second', 2)]:
+            self._category_with_image(label, priority)
+
+        response = self.client.get(reverse('category-list'))
+
+        self.assertEqual(
+            [c['label'] for c in response.data],
+            ['First', 'Second', 'Third', 'Alpha', 'Zeta'],
+        )
+
+    def test_list_reports_design_counts(self):
+        with_designs = self._category_with_image('Beds')
+        empty = self._category_with_image('Doors')
+        self._design_in(with_designs)
+        self._design_in(with_designs)
+
+        by_label = {c['label']: c for c in self.client.get(reverse('category-list')).data}
+
+        self.assertEqual(by_label['Beds']['design_count'], 2)
+        self.assertFalse(by_label['Beds']['can_delete'])
+        self.assertEqual(by_label['Doors']['design_count'], 0)
+        self.assertTrue(by_label['Doors']['can_delete'])
+        self.assertIsNotNone(empty)
+
+    def test_a_category_without_an_image_still_lists(self):
+        Category.objects.create(label='Legacy')  # created before images existed
+        response = self.client.get(reverse('category-list'))
+        self.assertIsNone(response.data[0]['image_url'])
+
+    # --- edit ------------------------------------------------------------------
+
+    def test_editing_text_and_priority_keeps_the_image(self):
+        category = self._category_with_image('Beds', priority=5)
+        image = category.image_file
+
+        response = self._patch(category, label='Bedroom', priority=1)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        category.refresh_from_db()
+        self.assertEqual((category.label, category.priority), ('Bedroom', 1))
+        self.assertEqual(category.image_file, image)
+        self.assertEqual(self.providers.stored, [])
+        self.assertEqual(self.providers.deleted, [])
+
+    def test_a_category_with_designs_can_still_be_edited(self):
+        category = self._category_with_image('Beds')
+        self._design_in(category)
+
+        response = self._patch(category, label='Bedroom', priority=3)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data['label'], 'Bedroom')
+        self.assertFalse(response.data['can_delete'])
+
+    def test_an_empty_priority_clears_it(self):
+        category = self._category_with_image('Beds', priority=4)
+        response = self._patch(category, priority='')
+        self.assertEqual(response.status_code, 200, response.data)
+        category.refresh_from_db()
+        self.assertIsNone(category.priority)
+
+    def test_renaming_to_its_own_name_is_allowed(self):
+        category = self._category_with_image('Beds')
+        self.assertEqual(self._patch(category, label='Beds', priority=2).status_code, 200)
+
+    def test_replacing_the_image_removes_the_old_one_after_saving(self):
+        category = self._category_with_image('Beds')
+        old = category.image_file
+
+        response = self._patch(category, image=_image_file('new.png'))
+
+        self.assertEqual(response.status_code, 200, response.data)
+        category.refresh_from_db()
+        self.assertNotEqual(category.image_file, old)
+        self.assertEqual(self.providers.deleted, [('cloudinary', old.storage_key)])
+        self.assertFalse(StoredFile.objects.filter(pk=old.pk).exists())
+
+    def test_a_failed_replacement_keeps_the_old_image_and_removes_the_new_one(self):
+        category = self._category_with_image('Beds')
+        old = category.image_file
+
+        with patch.object(type(category), 'save', side_effect=RuntimeError('db down')):
+            with self.assertRaises(RuntimeError):
+                self._patch(category, image=_image_file('new.png'))
+
+        category.refresh_from_db()
+        self.assertEqual(category.image_file, old)
+        self.assertEqual(len(self.providers.stored), 1)
+        self.assertEqual([p for p, _ in self.providers.deleted], ['cloudinary'])
+        self.assertTrue(StoredFile.objects.filter(pk=old.pk).exists())
+
+    # --- delete ----------------------------------------------------------------
+
+    def test_an_empty_category_is_deleted_with_its_image_and_sub_categories(self):
+        category = self._category_with_image('Beds')
+        image = category.image_file
+        SubCategory.objects.create(category=category, label='Headboards')
+
+        response = self._delete(category)
+
+        self.assertEqual(response.status_code, 204)
+        self.assertFalse(Category.objects.exists())
+        self.assertFalse(SubCategory.objects.exists())
+        self.assertFalse(StoredFile.objects.filter(pk=image.pk).exists())
+        self.assertEqual(self.providers.deleted, [('cloudinary', image.storage_key)])
+
+    def test_a_category_with_designs_cannot_be_deleted(self):
+        category = self._category_with_image('Beds')
+        self._design_in(category)
+
+        response = self._delete(category)
+
+        self.assertEqual(response.status_code, 409)
+        self.assertIn('still has designs', response.data['detail'])
+        self.assertTrue(Category.objects.filter(pk=category.pk).exists())
+        self.assertTrue(StoredFile.objects.filter(pk=category.image_file_id).exists())
+        self.assertEqual(self.providers.deleted, [])
+
+    def test_a_design_added_during_the_delete_still_blocks_it(self):
+        category = self._category_with_image('Beds')
+        with patch.object(
+            type(category), 'delete', side_effect=ProtectedError('protected', set()),
+        ):
+            response = self._delete(category)
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(self.providers.deleted, [])
+
+    def test_deleting_a_missing_category_is_a_404(self):
+        response = self.client.delete(reverse('admin-category-delete', args=[9999]))
+        self.assertEqual(response.status_code, 404)
+
+    # --- cleanup ---------------------------------------------------------------
+
+    def test_the_cleanup_job_never_treats_a_category_image_as_an_orphan(self):
+        category = self._category_with_image('Beds')
+        unused = StoredFile.objects.create(
+            owner=self.admin, provider=StoredFile.Provider.CLOUDINARY,
+            storage_key='users/1/images/unused', original_name='u.png',
+            content_type='image/png', size=1, status=StoredFile.Status.READY,
+        )
+        long_ago = timezone.now() - timedelta(minutes=config.CLEANUP_MAX_AGE_MINUTES + 5)
+        StoredFile.objects.filter(pk__in=[category.image_file_id, unused.pk]).update(created_at=long_ago)
+
+        self.assertEqual(run_cleanup(), {'orphanedDeleted': 1})
+
+        self.assertTrue(StoredFile.objects.filter(pk=category.image_file_id).exists())
+        self.assertFalse(StoredFile.objects.filter(pk=unused.pk).exists())

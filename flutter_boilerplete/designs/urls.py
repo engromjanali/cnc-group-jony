@@ -2,6 +2,8 @@ from django.urls import path
 
 from .views import (
     AdminCategoryCreateView,
+    AdminCategoryDeleteView,
+    AdminCategoryUpdateView,
     AdminDesignAddView,
     AdminDesignDeleteView,
     AdminDesignListView,
@@ -17,6 +19,16 @@ urlpatterns = [
     path('category/list', CategoryListView.as_view(), name='category-list'),
     path('subcategory/list', SubCategoryListView.as_view(), name='subcategory-list'),
     path('admin/category/add', AdminCategoryCreateView.as_view(), name='admin-category-add'),
+    path(
+        'admin/category/update/<int:pk>',
+        AdminCategoryUpdateView.as_view(),
+        name='admin-category-update',
+    ),
+    path(
+        'admin/category/delete/<int:pk>',
+        AdminCategoryDeleteView.as_view(),
+        name='admin-category-delete',
+    ),
     path('admin/subcategory/add', AdminSubCategoryCreateView.as_view(), name='admin-subcategory-add'),
     path('admin/design/list', AdminDesignListView.as_view(), name='admin-design-list'),
     path('admin/design/add', AdminDesignAddView.as_view(), name='admin-design-add'),

@@ -11,11 +11,15 @@ class DesignsConfig(AppConfig):
 
 
 def _referenced_stored_file_ids():
-    from .models import Design
+    """Every stored file a design or category still points at, so the cleanup
+    job never treats one of them as an orphan."""
+    from .models import Category, Design
 
-    return list(
-        Design.objects.exclude(image_file=None).values_list('image_file_id', flat=True),
-    ) + list(
-        Design.objects.exclude(design_stored_file=None)
-        .values_list('design_stored_file_id', flat=True),
+    def ids(queryset, field):
+        return list(queryset.exclude(**{field: None}).values_list(f'{field}_id', flat=True))
+
+    return (
+        ids(Design.objects, 'image_file')
+        + ids(Design.objects, 'design_stored_file')
+        + ids(Category.objects, 'image_file')
     )

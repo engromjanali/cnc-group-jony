@@ -1,5 +1,6 @@
+from django.db.models import Count, ProtectedError
 from django.http import Http404
-from rest_framework import generics, permissions
+from rest_framework import generics, permissions, status
 from rest_framework.generics import get_object_or_404
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
@@ -22,9 +23,17 @@ from .serializers import (
 
 
 class CategoryListView(generics.ListAPIView):
-    """GET /api/v1/category/list"""
+    """GET /api/v1/category/list - ordered by priority (lowest first, unset
+    last), then name. `design_count` / `can_delete` say whether the category
+    still has designs."""
 
-    queryset = Category.objects.all()
+    # Ordered explicitly: Django ignores Meta.ordering on a query that
+    # aggregates (the Count below turns it into a GROUP BY).
+    queryset = (
+        Category.objects.select_related('image_file')
+        .annotate(design_count=Count('designs'))
+        .order_by(*Category._meta.ordering)
+    )
     serializer_class = CategorySerializer
     permission_classes = [permissions.IsAuthenticated]
     pagination_class = None
@@ -45,12 +54,60 @@ class SubCategoryListView(generics.ListAPIView):
         return queryset
 
 
-class AdminCategoryCreateView(generics.CreateAPIView):
-    """POST /api/v1/admin/category/add"""
+class AdminCategoryCreateView(StorageErrorsMixin, generics.CreateAPIView):
+    """POST /api/v1/admin/category/add
+
+    Multipart fields: label, image (file, required), priority (optional)."""
 
     queryset = Category.objects.all()
     serializer_class = CategorySerializer
     permission_classes = [permissions.IsAdminUser]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+
+class AdminCategoryUpdateView(StorageErrorsMixin, generics.UpdateAPIView):
+    """PUT/PATCH /api/v1/admin/category/update/<id>
+
+    Editing is always allowed, including for a category that has designs."""
+
+    queryset = Category.objects.select_related('image_file')
+    serializer_class = CategorySerializer
+    permission_classes = [permissions.IsAdminUser]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+
+class AdminCategoryDeleteView(generics.DestroyAPIView):
+    """DELETE /api/v1/admin/category/delete/<id>
+
+    A category that still has designs cannot be deleted (409); an empty one is
+    deleted along with its sub categories and its image."""
+
+    queryset = Category.objects.select_related('image_file')
+    permission_classes = [permissions.IsAdminUser]
+
+    def destroy(self, request, *args, **kwargs):
+        category = self.get_object()
+        blocked = Response(
+            {
+                'detail': (
+                    f'"{category.label}" still has designs, so it cannot be deleted. '
+                    'Move or delete its designs first - you can still edit it.'
+                ),
+            },
+            status=status.HTTP_409_CONFLICT,
+        )
+        if category.designs.exists():
+            return blocked
+
+        image = category.image_file
+        try:
+            category.delete()
+        except ProtectedError:
+            # A design was added between the check above and the delete.
+            return blocked
+        if image is not None:
+            discard(image)
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class AdminSubCategoryCreateView(generics.CreateAPIView):

@@ -38,10 +38,49 @@ def has_design_file(design):
     return bool(design.design_stored_file_id or design.design_file or design.design_file_url)
 
 
+def validate_image_upload(image):
+    """Shared by every serializer that accepts an image file."""
+    # Pillow has already opened it, so this is the file's real format rather
+    # than whatever the client claimed.
+    image_format = (getattr(getattr(image, 'image', None), 'format', '') or '').lower()
+    if image_format not in storage_config.ALLOWED_IMAGE_FORMATS:
+        raise serializers.ValidationError(
+            f'Unsupported image format: {image_format or "unknown"}. Use JPG, PNG, WebP or GIF.',
+        )
+    if image.size > storage_config.MAX_DESIGN_UPLOAD_BYTES:
+        limit_mb = storage_config.MAX_DESIGN_UPLOAD_BYTES / (1024 * 1024)
+        raise serializers.ValidationError(
+            f'The image is {image.size / (1024 * 1024):.1f} MB; the limit is {limit_mb:g} MB.',
+        )
+    return image
+
+
 class CategorySerializer(serializers.ModelSerializer):
+    """Used by the category list and the admin add/edit endpoints.
+
+    `image` is uploaded by this backend to Cloudinary. It is required when a
+    category is created; on edit it is optional, and a replaced image is
+    removed from storage once the new one is saved."""
+
+    image = serializers.ImageField(write_only=True, required=False)
+    image_url = serializers.SerializerMethodField()
+    design_count = serializers.SerializerMethodField()
+    can_delete = serializers.SerializerMethodField()
+
     class Meta:
         model = Category
-        fields = ('id', 'label')
+        fields = ('id', 'label', 'priority', 'image', 'image_url', 'design_count', 'can_delete')
+
+    def get_image_url(self, obj):
+        return delivery_url(obj.image_file.storage_key) if obj.image_file_id else None
+
+    def get_design_count(self, obj):
+        # The list view annotates this; other responses fall back to a query.
+        annotated = getattr(obj, 'design_count', None)
+        return annotated if annotated is not None else obj.designs.count()
+
+    def get_can_delete(self, obj):
+        return self.get_design_count(obj) == 0
 
     def validate_label(self, value):
         qs = Category.objects.filter(label__iexact=value)
@@ -50,6 +89,48 @@ class CategorySerializer(serializers.ModelSerializer):
         if qs.exists():
             raise serializers.ValidationError('A category with this label already exists.')
         return value
+
+    def validate_image(self, image):
+        return validate_image_upload(image)
+
+    def validate(self, attrs):
+        if self.instance is None and not attrs.get('image'):
+            raise serializers.ValidationError({'image': 'An image is required for a new category.'})
+        return attrs
+
+    def create(self, validated_data):
+        return self._save(None, validated_data)
+
+    def update(self, instance, validated_data):
+        return self._save(instance, validated_data)
+
+    def _save(self, instance, validated_data):
+        image = validated_data.pop('image', None)
+
+        stored = None
+        replaced = None
+        try:
+            if image is not None:
+                stored = store_upload(
+                    self.context['request'].user, StoredFile.Provider.CLOUDINARY, image,
+                    file_name=image.name, content_type=image.content_type,
+                )
+                validated_data['image_file'] = stored
+                if instance is not None and instance.image_file_id:
+                    replaced = instance.image_file
+
+            if instance is None:
+                category = super().create(validated_data)
+            else:
+                category = super().update(instance, validated_data)
+        except Exception:
+            if stored is not None:
+                discard(stored)
+            raise
+
+        if replaced is not None:
+            discard(replaced)
+        return category
 
 
 class SubCategorySerializer(serializers.ModelSerializer):
@@ -94,14 +175,7 @@ class DesignWriteSerializer(serializers.ModelSerializer):
         )
 
     def validate_image(self, image):
-        # Pillow has already opened it, so this is the file's real format
-        # rather than whatever the client claimed.
-        image_format = (getattr(getattr(image, 'image', None), 'format', '') or '').lower()
-        if image_format not in storage_config.ALLOWED_IMAGE_FORMATS:
-            raise serializers.ValidationError(
-                f'Unsupported image format: {image_format or "unknown"}. Use JPG, PNG, WebP or GIF.',
-            )
-        return image
+        return validate_image_upload(image)
 
     def validate_design_file(self, design_file):
         extension = file_extension(sanitize_file_name(design_file.name))

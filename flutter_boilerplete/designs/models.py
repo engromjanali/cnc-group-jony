@@ -5,9 +5,16 @@ from storage.models import StoredFile
 
 class Category(models.Model):
     label = models.CharField(max_length=100, unique=True)
+    # Cloudinary image shown for the category. Optional in the database because
+    # categories created before images existed have none.
+    image_file = models.ForeignKey(
+        StoredFile, related_name='+', on_delete=models.SET_NULL, null=True, blank=True,
+    )
+    # Lower numbers are listed first; categories with no priority come last.
+    priority = models.PositiveIntegerField(null=True, blank=True)
 
     class Meta:
-        ordering = ['label']
+        ordering = [models.F('priority').asc(nulls_last=True), 'label']
 
     def __str__(self):
         return self.label

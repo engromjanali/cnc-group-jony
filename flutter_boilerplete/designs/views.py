@@ -25,8 +25,13 @@ from .serializers import (
 
 # How many of a category's newest designs the home screen gets, and the most it
 # may ask for.
-HOME_DESIGNS_PER_CATEGORY = 20
+HOME_DESIGNS_PER_CATEGORY = 10
 HOME_MAX_DESIGNS_PER_CATEGORY = 50
+
+# How many categories one page of the home screen holds, and the most a client
+# may ask for at once.
+HOME_CATEGORIES_PER_PAGE = 10
+HOME_MAX_CATEGORIES_PER_PAGE = 50
 
 
 class CategoryListView(generics.ListAPIView):
@@ -46,18 +51,27 @@ class CategoryListView(generics.ListAPIView):
     pagination_class = None
 
 
-class HomeCategoriesView(generics.ListAPIView):
-    """GET /api/v1/home/categories?per_category=20
+class HomeCategoryPagination(PageNumberPagination):
+    page_size = HOME_CATEGORIES_PER_PAGE
+    page_size_query_param = 'page_size'
+    max_page_size = HOME_MAX_CATEGORIES_PER_PAGE
 
-    Everything the home screen needs in one request: every category, in the
-    same order as the category list, each with its total `design_count` and its
-    newest designs (newest first, at most `per_category` of them, 20 unless
-    asked otherwise). A category with no designs is still listed, with an empty
-    `designs`, so it can still be picked as a filter."""
+
+class HomeCategoriesView(generics.ListAPIView):
+    """GET /api/v1/home/categories-designs?page=1&page_size=10&per_category=10
+
+    Everything the home screen needs, a page of categories at a time: the
+    categories that have designs, in the same order as the category list, each
+    with its total `design_count` and its newest designs (newest first, at most
+    `per_category` of them, 10 unless asked otherwise). A category with no
+    designs is left out - the home screen has nothing to show for it - and it is
+    left out before the page is cut, so no page is ever short or empty because
+    of one. Paginated like the design list: `count`, `next`, `previous`,
+    `results`."""
 
     serializer_class = HomeCategorySerializer
     permission_classes = [permissions.IsAuthenticated]
-    pagination_class = None
+    pagination_class = HomeCategoryPagination
 
     def _per_category(self):
         raw = self.request.query_params.get('per_category')
@@ -71,7 +85,9 @@ class HomeCategoriesView(generics.ListAPIView):
 
     def get_queryset(self):
         # Sliced per category: Django fetches every category's newest few in a
-        # single extra query rather than one per category.
+        # single extra query rather than one per category - and only for the
+        # categories on the requested page, as the prefetch runs after the page
+        # is cut.
         newest = Design.objects.select_related(
             'category', 'sub_category', 'image_file', 'design_stored_file',
         ).order_by('-created_at', '-id')[:self._per_category()]
@@ -81,6 +97,7 @@ class HomeCategoriesView(generics.ListAPIView):
         return (
             Category.objects.select_related('image_file')
             .annotate(design_count=Count('designs'))
+            .filter(design_count__gt=0)
             .prefetch_related(Prefetch('designs', queryset=newest, to_attr='latest_designs'))
             .order_by(*Category._meta.ordering)
         )
@@ -235,7 +252,7 @@ class AdminDesignDeleteView(generics.DestroyAPIView):
 
 
 class DesignListView(generics.ListAPIView):
-    """GET /api/v1/design/list?category=<id>&page=&page_size=
+    """GET /api/v1/category-design/list?category=<id>&page=&page_size=
 
     The published designs for any signed-in user - the same shape as the design
     details, so it never carries a link to the private cutting file (that is

@@ -65,6 +65,13 @@ class DesignListTests(DesignFixtures):
 
     # --- access ---------------------------------------------------------------
 
+    def test_it_is_served_at_category_design_list(self):
+        self.assertEqual(reverse('design-list'), '/api/v1/category-design/list')
+        self.assertEqual(self.client.get('/api/v1/category-design/list').status_code, 200)
+
+    def test_the_old_path_is_gone(self):
+        self.assertEqual(self.client.get('/api/v1/promotional-banner/list').status_code, 404)
+
     def test_it_needs_a_login(self):
         self.client.force_authenticate(None)
         self.assertEqual(self._list().status_code, 401)
@@ -258,19 +265,30 @@ class DesignListTests(DesignFixtures):
 
 
 class HomeCategoriesTests(DesignFixtures):
-    """GET home/categories - the home screen's one request: every category with
-    its newest designs."""
+    """GET home/categories-designs - the home screen's request: a page of the
+    categories that have designs, each with its newest designs."""
 
     def _get(self, **params):
         return self.client.get(reverse('home-categories'), params)
 
     def _labels(self, response):
         self.assertEqual(response.status_code, 200, response.data)
-        return [category['label'] for category in response.data]
+        return [category['label'] for category in response.data['results']]
 
     def _by_label(self, response):
         self.assertEqual(response.status_code, 200, response.data)
-        return {category['label']: category for category in response.data}
+        return {category['label']: category for category in response.data['results']}
+
+    def _many_categories(self, count, *, prefix='Cat'):
+        """[count] categories with a design each, listed in this order (by
+        priority) - the first has the lowest number."""
+        return [
+            self._design(
+                f'{prefix} {n:02d} design',
+                Category.objects.create(label=f'{prefix} {n:02d}', priority=n + 1),
+            ).category
+            for n in range(count)
+        ]
 
     def _titles(self, category):
         return [design['title'] for design in category['designs']]
@@ -288,19 +306,37 @@ class HomeCategoriesTests(DesignFixtures):
 
     # --- the categories ---------------------------------------------------------
 
-    def test_every_category_is_listed_even_one_with_no_designs(self):
+    def test_a_category_with_no_designs_is_left_out(self):
         self._design('Headboard', self.beds)
 
-        categories = self._by_label(self._get())
+        response = self._get()
 
-        self.assertEqual(set(categories), {'Beds', 'Doors'})
-        self.assertEqual(categories['Doors']['designs'], [])
-        self.assertEqual(categories['Doors']['design_count'], 0)
+        self.assertEqual(self._labels(response), ['Beds'])
+        self.assertEqual(response.data['count'], 1)
+
+    def test_no_category_has_designs_at_all_is_an_empty_page_not_an_error(self):
+        response = self._get()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['count'], 0)
+        self.assertEqual(response.data['results'], [])
+        self.assertIsNone(response.data['next'])
+
+    def test_a_category_appears_with_its_first_design_and_goes_with_its_last(self):
+        self.assertEqual(self._labels(self._get()), [])
+
+        design = self._design('Headboard', self.beds)
+        self.assertEqual(self._labels(self._get()), ['Beds'])
+
+        design.delete()
+        self.assertEqual(self._labels(self._get()), [])
 
     def test_categories_come_in_the_order_of_the_category_list(self):
         Category.objects.filter(pk=self.doors.pk).update(priority=1)
         Category.objects.filter(pk=self.beds.pk).update(priority=2)
-        Category.objects.create(label='Alpha')  # no priority: last, by name
+        alpha = Category.objects.create(label='Alpha')  # no priority: last, by name
+        for category in (self.doors, self.beds, alpha):
+            self._design(f'{category.label} design', category)
 
         self.assertEqual(self._labels(self._get()), ['Doors', 'Beds', 'Alpha'])
         listed = self.client.get(reverse('category-list'))
@@ -309,6 +345,7 @@ class HomeCategoriesTests(DesignFixtures):
         )
 
     def test_a_category_carries_its_picture_and_priority(self):
+        self._design('Headboard', self.beds)
         Category.objects.filter(pk=self.beds.pk).update(
             priority=3, image_file=self._stored(StoredFile.Provider.CLOUDINARY, 'beds.png'),
         )
@@ -323,6 +360,8 @@ class HomeCategoriesTests(DesignFixtures):
         self.assertNotIn('can_delete', beds)
 
     def test_a_category_without_a_picture_still_lists(self):
+        self._design('Headboard', self.beds)
+
         self.assertIsNone(self._by_label(self._get())['Beds']['image_url'])
 
     def test_the_design_count_is_the_total_not_just_what_is_listed(self):
@@ -339,7 +378,7 @@ class HomeCategoriesTests(DesignFixtures):
             self._design(f'Bed {i}', self.beds)
         self._design('Door', self.doors)
 
-        home = {c['id']: c['design_count'] for c in self._get().data}
+        home = {c['id']: c['design_count'] for c in self._get().data['results']}
         listed = {c['id']: c['design_count'] for c in self.client.get(reverse('category-list')).data}
 
         self.assertEqual(home, listed)
@@ -374,15 +413,15 @@ class HomeCategoriesTests(DesignFixtures):
             self._titles(self._by_label(self._get())['Beds']), ['Third', 'Second', 'First'],
         )
 
-    def test_a_category_holds_the_newest_twenty_by_default(self):
+    def test_a_category_holds_the_newest_ten_by_default(self):
         for i in range(25):
             self._design(f'Design {i:02d}', self.beds)
 
         beds = self._by_label(self._get())['Beds']
 
-        self.assertEqual(len(beds['designs']), 20)
+        self.assertEqual(len(beds['designs']), 10)
         self.assertEqual(beds['designs'][0]['title'], 'Design 24')
-        self.assertEqual(beds['designs'][-1]['title'], 'Design 05')
+        self.assertEqual(beds['designs'][-1]['title'], 'Design 15')
         self.assertEqual(beds['design_count'], 25)
 
     def test_the_limit_is_the_newest_few(self):
@@ -429,7 +468,93 @@ class HomeCategoriesTests(DesignFixtures):
         for i in range(25):
             self._design(f'Design {i}', self.beds)
 
-        self.assertEqual(len(self._by_label(self._get(per_category=''))['Beds']['designs']), 20)
+        self.assertEqual(len(self._by_label(self._get(per_category=''))['Beds']['designs']), 10)
+
+    # --- pages of categories --------------------------------------------------------
+
+    def test_a_page_holds_ten_categories_by_default(self):
+        self._many_categories(12)
+
+        first = self._get()
+        second = self._get(page=2)
+
+        self.assertEqual(first.data['count'], 12)
+        self.assertEqual(len(first.data['results']), 10)
+        self.assertEqual(len(second.data['results']), 2)
+
+    def test_pages_continue_in_order_with_no_overlap(self):
+        self._many_categories(23)
+
+        pages = [self._labels(self._get(page=n)) for n in (1, 2, 3)]
+
+        self.assertEqual([len(page) for page in pages], [10, 10, 3])
+        self.assertEqual(
+            [label for page in pages for label in page],
+            [f'Cat {n:02d}' for n in range(23)],
+        )
+
+    def test_next_says_whether_there_is_another_page(self):
+        self._many_categories(12)
+
+        first, last = self._get(), self._get(page=2)
+
+        self.assertIn('page=2', first.data['next'])
+        self.assertIsNone(first.data['previous'])
+        self.assertIsNone(last.data['next'])
+
+    def test_exactly_a_full_page_has_no_next_page(self):
+        self._many_categories(10)
+
+        self.assertIsNone(self._get().data['next'])
+
+    def test_the_page_size_can_be_asked_for_and_is_capped(self):
+        self._many_categories(60)
+
+        self.assertEqual(len(self._get(page_size=3).data['results']), 3)
+        self.assertEqual(len(self._get(page_size=500).data['results']), 50)
+
+    def test_a_page_past_the_end_is_a_404(self):
+        self._many_categories(3)
+
+        self.assertEqual(self._get(page=2).status_code, 404)
+
+    def test_empty_categories_never_make_a_page_short_or_empty(self):
+        # Every other category has no designs: were they cut out after the page
+        # was cut, page 1 would come back with five and page 2 with none.
+        for n in range(30):
+            category = Category.objects.create(label=f'Cat {n:02d}', priority=n + 1)
+            if n % 2 == 0:
+                self._design(f'Cat {n:02d} design', category)
+
+        first, second = self._get(), self._get(page=2)
+
+        self.assertEqual(first.data['count'], 15)
+        self.assertEqual(len(first.data['results']), 10)
+        self.assertEqual(len(second.data['results']), 5)
+        self.assertIsNone(second.data['next'])
+
+    def test_each_page_carries_the_newest_designs_of_its_own_categories(self):
+        categories = self._many_categories(12)
+        for i in range(12):
+            self._design(f'Late design {i:02d}', categories[11])
+
+        last = self._by_label(self._get(page=2))['Cat 11']
+
+        self.assertEqual(last['design_count'], 13)
+        self.assertEqual(len(last['designs']), 10)
+        self.assertEqual(last['designs'][0]['title'], 'Late design 11')
+
+    def test_the_designs_limit_and_the_page_size_work_together(self):
+        for category in self._many_categories(5):
+            for i in range(4):
+                self._design(f'{category.label} extra {i}', category)
+
+        response = self._get(page_size=2, per_category=3)
+
+        self.assertEqual(len(response.data['results']), 2)
+        for category in response.data['results']:
+            self.assertEqual(len(category['designs']), 3)
+            self.assertEqual(category['design_count'], 5)
 
     # --- what each design carries ---------------------------------------------------------
 
@@ -486,6 +611,20 @@ class HomeCategoriesTests(DesignFixtures):
         many = queries()
 
         self.assertEqual(few, many)
+
+    def test_a_page_costs_the_same_however_many_pages_there_are(self):
+        self._many_categories(3)
+
+        def queries(**params):
+            with CaptureQueriesContext(connection) as captured:
+                self.assertEqual(self._get(**params).status_code, 200)
+            return len(captured)
+
+        small = queries()
+        self._many_categories(40, prefix='More')
+
+        self.assertEqual(small, queries())
+        self.assertEqual(small, queries(page=3))
 
 
 class SeedDummyCatalogTests(DesignFixtures):
@@ -745,11 +884,14 @@ class SeedDummyCatalogTests(DesignFixtures):
         self._run('--categories', '2', '--designs', '25')
         first = Category.objects.get(label=CATALOGUE[0][0])
 
-        home = {c['label']: c for c in self.client.get(reverse('home-categories')).data}
+        home = {
+            c['label']: c
+            for c in self.client.get(reverse('home-categories')).data['results']
+        }
         entry = home[CATALOGUE[0][0]]
 
         self.assertEqual(entry['design_count'], 25)
-        self.assertEqual(len(entry['designs']), 20, 'the newest twenty')
+        self.assertEqual(len(entry['designs']), 10, 'the newest ten')
         self.assertTrue(entry['designs'][0]['image_url'].startswith(MARKER))
         self.assertFalse(entry['designs'][0]['has_design_file'])
         listed = self.client.get(reverse('design-list'), {'category': first.pk})

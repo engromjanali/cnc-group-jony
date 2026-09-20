@@ -37,7 +37,7 @@ urlpatterns = [
     path('admin/design/add', AdminDesignAddView.as_view(), name='admin-design-add'),
     path('admin/design/update/<int:pk>', AdminDesignUpdateView.as_view(), name='admin-design-update'),
     path('admin/design/delete/<int:pk>', AdminDesignDeleteView.as_view(), name='admin-design-delete'),
-    path('promotional-banner/list', DesignListView.as_view(), name='design-list'),
+    path('category-design/list', DesignListView.as_view(), name='design-list'),
     path('design/details/<int:pk>', DesignDetailView.as_view(), name='design-details'),
     path(
         'design/<int:pk>/download-url',

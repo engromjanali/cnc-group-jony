@@ -81,6 +81,7 @@ INSTALLED_APPS = [
 
     # Local
     'accounts',
+    'banners',
     'core',
     'designs',
     'storage',

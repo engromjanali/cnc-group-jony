@@ -32,7 +32,9 @@ class Banner(models.Model):
     image_file = models.ForeignKey(
         StoredFile, related_name='+', on_delete=models.SET_NULL, null=True, blank=True,
     )
-    # Text on the button over the banner. Blank hides the button.
+    # Text the admin gave the button over the banner, stored as typed. Blank is
+    # allowed: the app then shows "Try Now" if the banner has a category, and no
+    # button if it does not.
     cta_label = models.CharField(max_length=40, blank=True, default='Try Now')
     # Where tapping the banner leads. A deleted category leaves the banner in
     # place, just without a destination.

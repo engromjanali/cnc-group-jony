@@ -1,6 +1,7 @@
 from django.db.models import Count, ProtectedError
 from django.http import Http404
 from rest_framework import generics, permissions, status
+from rest_framework.exceptions import ValidationError
 from rest_framework.generics import get_object_or_404
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
@@ -185,6 +186,35 @@ class AdminDesignDeleteView(generics.DestroyAPIView):
         super().perform_destroy(instance)
         for stored_file in stored_files:
             discard(stored_file)
+
+
+class DesignListView(generics.ListAPIView):
+    """GET /api/v1/design/list?category=<id>&page=&page_size=
+
+    The published designs for any signed-in user - the same shape as the design
+    details, so it never carries a link to the private cutting file (that is
+    fetched per design, just before downloading). Newest first; without
+    `category` it lists every design. An unknown category is an empty page, not
+    an error."""
+
+    serializer_class = DesignDetailSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    pagination_class = DesignPagination
+
+    def get_queryset(self):
+        queryset = Design.objects.select_related(
+            'category', 'sub_category', 'image_file', 'design_stored_file',
+        )
+
+        category_id = self.request.query_params.get('category')
+        if category_id:
+            if not category_id.isdecimal():
+                raise ValidationError({'category': 'Must be a category id (a number).'})
+            queryset = queryset.filter(category_id=category_id)
+
+        # `id` breaks ties, so designs created in the same instant cannot swap
+        # places between pages.
+        return queryset.order_by('-created_at', '-id')
 
 
 class DesignDetailView(generics.RetrieveAPIView):

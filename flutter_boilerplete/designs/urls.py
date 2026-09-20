@@ -13,11 +13,13 @@ from .views import (
     DesignDetailView,
     DesignDownloadUrlView,
     DesignListView,
+    HomeCategoriesView,
     SubCategoryListView,
 )
 
 urlpatterns = [
     path('category/list', CategoryListView.as_view(), name='category-list'),
+    path('home/categories-designs', HomeCategoriesView.as_view(), name='home-categories'),
     path('subcategory/list', SubCategoryListView.as_view(), name='subcategory-list'),
     path('admin/category/add', AdminCategoryCreateView.as_view(), name='admin-category-add'),
     path(

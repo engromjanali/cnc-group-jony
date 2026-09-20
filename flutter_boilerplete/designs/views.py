@@ -1,4 +1,4 @@
-from django.db.models import Count, ProtectedError
+from django.db.models import Count, Prefetch, ProtectedError
 from django.http import Http404
 from rest_framework import generics, permissions, status
 from rest_framework.exceptions import ValidationError
@@ -18,9 +18,15 @@ from .serializers import (
     CategorySerializer,
     DesignDetailSerializer,
     DesignWriteSerializer,
+    HomeCategorySerializer,
     SubCategorySerializer,
     legacy_design_file_url,
 )
+
+# How many of a category's newest designs the home screen gets, and the most it
+# may ask for.
+HOME_DESIGNS_PER_CATEGORY = 20
+HOME_MAX_DESIGNS_PER_CATEGORY = 50
 
 
 class CategoryListView(generics.ListAPIView):
@@ -38,6 +44,46 @@ class CategoryListView(generics.ListAPIView):
     serializer_class = CategorySerializer
     permission_classes = [permissions.IsAuthenticated]
     pagination_class = None
+
+
+class HomeCategoriesView(generics.ListAPIView):
+    """GET /api/v1/home/categories?per_category=20
+
+    Everything the home screen needs in one request: every category, in the
+    same order as the category list, each with its total `design_count` and its
+    newest designs (newest first, at most `per_category` of them, 20 unless
+    asked otherwise). A category with no designs is still listed, with an empty
+    `designs`, so it can still be picked as a filter."""
+
+    serializer_class = HomeCategorySerializer
+    permission_classes = [permissions.IsAuthenticated]
+    pagination_class = None
+
+    def _per_category(self):
+        raw = self.request.query_params.get('per_category')
+        if not raw:
+            return HOME_DESIGNS_PER_CATEGORY
+        if not raw.isdecimal() or not 1 <= int(raw) <= HOME_MAX_DESIGNS_PER_CATEGORY:
+            raise ValidationError({
+                'per_category': f'Must be a number from 1 to {HOME_MAX_DESIGNS_PER_CATEGORY}.',
+            })
+        return int(raw)
+
+    def get_queryset(self):
+        # Sliced per category: Django fetches every category's newest few in a
+        # single extra query rather than one per category.
+        newest = Design.objects.select_related(
+            'category', 'sub_category', 'image_file', 'design_stored_file',
+        ).order_by('-created_at', '-id')[:self._per_category()]
+
+        # Ordered explicitly: Django ignores Meta.ordering on a query that
+        # aggregates (the Count below turns it into a GROUP BY).
+        return (
+            Category.objects.select_related('image_file')
+            .annotate(design_count=Count('designs'))
+            .prefetch_related(Prefetch('designs', queryset=newest, to_attr='latest_designs'))
+            .order_by(*Category._meta.ordering)
+        )
 
 
 class SubCategoryListView(generics.ListAPIView):

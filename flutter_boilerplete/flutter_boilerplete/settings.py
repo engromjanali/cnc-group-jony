@@ -83,6 +83,7 @@ INSTALLED_APPS = [
     'accounts',
     'banners',
     'policies',
+    'app_settings',
     'core',
     'designs',
     'storage',

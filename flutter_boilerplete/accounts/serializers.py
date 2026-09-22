@@ -3,16 +3,58 @@ from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
 from rest_framework_simplejwt.tokens import RefreshToken
 
+from storage.models import StoredFile
+from storage.services import delivery_url
+from storage.uploads import discard, store_upload
+from storage.validators import validate_image_upload
+
 from .models import User
 
 
 class UserSerializer(serializers.ModelSerializer):
-    """Public representation of a user, returned by register/login/profile."""
+    """Public representation of a user, returned by register/login/profile.
+
+    `avatar` is write-only: a multipart image upload that this backend sends
+    to Cloudinary, the same way a design's preview image is handled. Reads
+    only ever see `avatar_url`, built on demand from the stored file.
+    """
+
+    avatar = serializers.ImageField(write_only=True, required=False)
+    avatar_url = serializers.SerializerMethodField()
 
     class Meta:
         model = User
-        fields = ('id', 'email', 'first_name', 'last_name', 'phone', 'avatar', 'date_joined')
-        read_only_fields = ('id', 'email', 'date_joined')
+        fields = (
+            'id', 'email', 'first_name', 'last_name', 'phone',
+            'avatar', 'avatar_url', 'date_joined', 'updated_at',
+        )
+        read_only_fields = ('id', 'email', 'date_joined', 'updated_at')
+
+    def get_avatar_url(self, obj):
+        return delivery_url(obj.avatar_file.storage_key) if obj.avatar_file_id else None
+
+    def validate_avatar(self, avatar):
+        return validate_image_upload(avatar)
+
+    def update(self, instance, validated_data):
+        avatar = validated_data.pop('avatar', None)
+        if avatar is None:
+            return super().update(instance, validated_data)
+
+        stored = store_upload(
+            instance, StoredFile.Provider.CLOUDINARY, avatar,
+            file_name=avatar.name, content_type=avatar.content_type,
+        )
+        previous = instance.avatar_file if instance.avatar_file_id else None
+        try:
+            validated_data['avatar_file'] = stored
+            instance = super().update(instance, validated_data)
+        except Exception:
+            discard(stored)
+            raise
+        if previous is not None:
+            discard(previous)
+        return instance
 
 
 class RegisterSerializer(serializers.ModelSerializer):

@@ -1,6 +1,8 @@
 from django.contrib.auth.models import AbstractUser, BaseUserManager
 from django.db import models
 
+from storage.models import StoredFile
+
 
 class UserManager(BaseUserManager):
     """Manager for a User model that authenticates by email instead of username."""
@@ -38,7 +40,13 @@ class User(AbstractUser):
     username = None
     email = models.EmailField('email address', unique=True)
     phone = models.CharField(max_length=32, blank=True)
-    avatar = models.URLField(blank=True)
+    # Uploaded to Cloudinary by this backend, like a design's preview image.
+    # There is no URL field to set directly - avatars only ever come from a
+    # multipart upload on the profile endpoint.
+    avatar_file = models.ForeignKey(
+        StoredFile, related_name='+', on_delete=models.SET_NULL, null=True, blank=True,
+    )
+    updated_at = models.DateTimeField(auto_now=True)
 
     USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = []

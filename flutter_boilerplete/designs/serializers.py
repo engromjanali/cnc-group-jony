@@ -4,7 +4,7 @@ from storage import config as storage_config
 from storage.models import StoredFile
 from storage.services import delivery_url
 from storage.uploads import discard, store_upload
-from storage.validators import file_extension, sanitize_file_name
+from storage.validators import file_extension, sanitize_file_name, validate_image_upload
 
 from .models import Category, Design, SubCategory
 
@@ -36,23 +36,6 @@ def legacy_design_file_url(design, request):
 
 def has_design_file(design):
     return bool(design.design_stored_file_id or design.design_file or design.design_file_url)
-
-
-def validate_image_upload(image):
-    """Shared by every serializer that accepts an image file."""
-    # Pillow has already opened it, so this is the file's real format rather
-    # than whatever the client claimed.
-    image_format = (getattr(getattr(image, 'image', None), 'format', '') or '').lower()
-    if image_format not in storage_config.ALLOWED_IMAGE_FORMATS:
-        raise serializers.ValidationError(
-            f'Unsupported image format: {image_format or "unknown"}. Use JPG, PNG, WebP or GIF.',
-        )
-    if image.size > storage_config.MAX_DESIGN_UPLOAD_BYTES:
-        limit_mb = storage_config.MAX_DESIGN_UPLOAD_BYTES / (1024 * 1024)
-        raise serializers.ValidationError(
-            f'The image is {image.size / (1024 * 1024):.1f} MB; the limit is {limit_mb:g} MB.',
-        )
-    return image
 
 
 class CategorySerializer(serializers.ModelSerializer):

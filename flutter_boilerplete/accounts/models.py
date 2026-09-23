@@ -46,6 +46,8 @@ class User(AbstractUser):
     avatar_file = models.ForeignKey(
         StoredFile, related_name='+', on_delete=models.SET_NULL, null=True, blank=True,
     )
+    # Only ever changed by an admin approving a wallet top-up (see the wallet app).
+    wallet_balance = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     updated_at = models.DateTimeField(auto_now=True)
 
     USERNAME_FIELD = 'email'

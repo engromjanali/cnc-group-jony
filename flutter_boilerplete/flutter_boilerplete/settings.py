@@ -87,6 +87,7 @@ INSTALLED_APPS = [
     'core',
     'designs',
     'storage',
+    'wallet',
 ]
 
 MIDDLEWARE = [

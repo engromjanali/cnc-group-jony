@@ -26,9 +26,9 @@ class UserSerializer(serializers.ModelSerializer):
         model = User
         fields = (
             'id', 'email', 'first_name', 'last_name', 'phone',
-            'avatar', 'avatar_url', 'date_joined', 'updated_at',
+            'avatar', 'avatar_url', 'wallet_balance', 'date_joined', 'updated_at',
         )
-        read_only_fields = ('id', 'email', 'date_joined', 'updated_at')
+        read_only_fields = ('id', 'email', 'wallet_balance', 'date_joined', 'updated_at')
 
     def get_avatar_url(self, obj):
         return delivery_url(obj.avatar_file.storage_key) if obj.avatar_file_id else None

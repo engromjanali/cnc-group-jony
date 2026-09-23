@@ -1,4 +1,4 @@
-from django.db.models import Count, ProtectedError
+from django.db.models import Count, ProtectedError, Q
 from django.http import Http404
 from rest_framework import generics, permissions, status
 from rest_framework.exceptions import ValidationError
@@ -189,13 +189,21 @@ class AdminDesignDeleteView(generics.DestroyAPIView):
 
 
 class DesignListView(generics.ListAPIView):
-    """GET /api/v1/designs/list?category=<id>&page=&page_size=
+    """GET /api/v1/designs/list?category=&sub_category=&design_type=&is_paid=&search=&page=&page_size=
 
     The published designs for any signed-in user - the same shape as the design
     details, so it never carries a link to the private cutting file (that is
-    fetched per design, just before downloading). Newest first; without
-    `category` it lists every design. An unknown category is an empty page, not
-    an error."""
+    fetched per design, just before downloading). Newest first.
+
+    Every filter is optional and they combine (AND):
+    - `category`, `sub_category`: ids. An unknown id is an empty page.
+    - `design_type`: `2d` or `3d`.
+    - `is_paid`: `true` = paid only, `false` = free only.
+    - `search`: case-insensitive "contains" on the title, description,
+      category label and sub category label. Blank is ignored.
+
+    A malformed value (non-numeric id, other design type, is_paid that is not
+    true/false) is a 400 naming the parameter, never silently ignored."""
 
     serializer_class = DesignDetailSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -211,6 +219,36 @@ class DesignListView(generics.ListAPIView):
             if not category_id.isdecimal():
                 raise ValidationError({'category': 'Must be a category id (a number).'})
             queryset = queryset.filter(category_id=category_id)
+
+        params = self.request.query_params
+
+        sub_category_id = params.get('sub_category')
+        if sub_category_id:
+            if not sub_category_id.isdecimal():
+                raise ValidationError({'sub_category': 'Must be a sub category id (a number).'})
+            queryset = queryset.filter(sub_category_id=sub_category_id)
+
+        design_type = params.get('design_type')
+        if design_type:
+            if design_type not in Design.DesignType.values:
+                raise ValidationError({'design_type': 'Must be "2d" or "3d".'})
+            queryset = queryset.filter(design_type=design_type)
+
+        is_paid = params.get('is_paid')
+        if is_paid:
+            wanted = is_paid.strip().lower()
+            if wanted not in ('true', 'false'):
+                raise ValidationError({'is_paid': 'Must be "true" or "false".'})
+            queryset = queryset.filter(is_paid=wanted == 'true')
+
+        search = (params.get('search') or '').strip()
+        if search:
+            queryset = queryset.filter(
+                Q(title__icontains=search)
+                | Q(description__icontains=search)
+                | Q(category__label__icontains=search)
+                | Q(sub_category__label__icontains=search)
+            )
 
         # `id` breaks ties, so designs created in the same instant cannot swap
         # places between pages.

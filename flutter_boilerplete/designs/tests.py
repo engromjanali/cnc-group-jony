@@ -199,6 +199,76 @@ class DesignListTests(DesignFixtures):
         # Not in the payload in any form: downloads are signed per design.
         self.assertNotIn(design.design_stored_file.storage_key, response.content.decode())
 
+    # --- search and filters -----------------------------------------------------
+
+    def _filter_fixtures(self):
+        panel = SubCategory.objects.create(category=self.beds, label='Panel')
+        self._design('Royal Bed', self.beds, sub_category=panel, is_paid=True, amount='9.00')
+        third = self._design('Modern Door', self.doors)
+        Design.objects.filter(pk=third.pk).update(design_type='3d', description='Carved royal look')
+        self._design('Plain Door', self.doors)
+        return panel
+
+    def test_search_matches_title_description_category_and_sub_category(self):
+        self._filter_fixtures()
+
+        self.assertEqual(self._titles(self._list(search='ROYAL')), ['Modern Door', 'Royal Bed'])
+        self.assertEqual(self._titles(self._list(search='plain')), ['Plain Door'])
+        self.assertEqual(self._titles(self._list(search='doors')), ['Plain Door', 'Modern Door'])
+        self.assertEqual(self._titles(self._list(search='panel')), ['Royal Bed'])
+        self.assertEqual(self._titles(self._list(search='nothing like it')), [])
+
+    def test_a_blank_search_is_ignored(self):
+        self._filter_fixtures()
+
+        self.assertEqual(len(self._titles(self._list(search='   '))), 3)
+        self.assertEqual(len(self._titles(self._list(search=''))), 3)
+
+    def test_design_type_filter(self):
+        self._filter_fixtures()
+
+        self.assertEqual(self._titles(self._list(design_type='3d')), ['Modern Door'])
+        self.assertEqual(len(self._titles(self._list(design_type='2d'))), 2)
+
+    def test_is_paid_filter(self):
+        self._filter_fixtures()
+
+        self.assertEqual(self._titles(self._list(is_paid='true')), ['Royal Bed'])
+        self.assertEqual(self._titles(self._list(is_paid='false')), ['Plain Door', 'Modern Door'])
+        self.assertEqual(len(self._titles(self._list(is_paid='TRUE'))), 1)
+
+    def test_sub_category_filter_takes_the_id(self):
+        panel = self._filter_fixtures()
+
+        self.assertEqual(self._titles(self._list(sub_category=panel.pk)), ['Royal Bed'])
+        self.assertEqual(self._titles(self._list(sub_category=99999)), [])
+
+    def test_filters_combine(self):
+        self._filter_fixtures()
+
+        self.assertEqual(self._titles(self._list(search='royal', design_type='3d')), ['Modern Door'])
+        self.assertEqual(self._titles(self._list(search='royal', category=self.beds.pk)), ['Royal Bed'])
+        self.assertEqual(self._titles(self._list(search='royal', is_paid='true', design_type='3d')), [])
+
+    def test_filtered_results_still_paginate(self):
+        for n in range(5):
+            self._design(f'Frame {n}', self.doors)
+        response = self._list(search='frame', page_size=2)
+
+        self.assertEqual(response.data['count'], 5)
+        self.assertEqual(len(response.data['results']), 2)
+        self.assertIsNotNone(response.data['next'])
+
+    def test_malformed_filters_are_a_400_naming_the_parameter(self):
+        for params, name in (
+            ({'design_type': 'flat'}, 'design_type'),
+            ({'is_paid': 'maybe'}, 'is_paid'),
+            ({'sub_category': 'abc'}, 'sub_category'),
+        ):
+            response = self._list(**params)
+            self.assertEqual(response.status_code, 400, params)
+            self.assertIn(name, response.data)
+
     def test_a_design_with_no_picture_still_lists(self):
         self._design('No picture', image=False)
 

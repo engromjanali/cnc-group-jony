@@ -14,6 +14,7 @@ urlpatterns = [
     path('api/v1/', include('designs.urls')),
     path('api/v1/', include('storage.urls')),
     path('api/v1/', include('wallet.urls')),
+    path('api/v1/', include('favorites.urls')),
 ]
 
 if settings.DEBUG:

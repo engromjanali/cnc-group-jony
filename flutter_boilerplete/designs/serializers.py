@@ -319,22 +319,3 @@ class DesignDetailSerializer(serializers.ModelSerializer):
 
     def get_has_design_file(self, obj):
         return has_design_file(obj)
-
-
-class HomeCategorySerializer(CategorySerializer):
-    """A category as the home screen shows it: its name and picture, how many
-    designs it has in all, and its newest few.
-
-    `latest_designs` is prepared by the view, in one query for every category.
-    Each design is the same shape as the design details, so it never carries a
-    link to the private cutting file."""
-
-    designs = serializers.SerializerMethodField()
-
-    class Meta(CategorySerializer.Meta):
-        fields = ('id', 'label', 'priority', 'image_url', 'design_count', 'designs')
-
-    def get_designs(self, obj):
-        return DesignDetailSerializer(
-            obj.latest_designs, many=True, context=self.context,
-        ).data

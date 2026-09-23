@@ -15,6 +15,15 @@ User = get_user_model()
 PLAY = 'https://play.google.com/store/apps/details?id=com.jony.cncgroupjony&hl=en'
 APPSTORE = 'https://apps.apple.com/app/cnc-design/id1234567890'
 
+# Every option added since android/iOS: blank value, switched on, until an
+# admin sets it.
+HELP_SUPPORT_DEFAULTS = {
+    'help_support_email': '', 'help_support_email_enabled': True,
+    'help_support_whatsapp': '', 'help_support_whatsapp_enabled': True,
+    'help_support_telegram': '', 'help_support_telegram_enabled': True,
+    'help_support_phone': '', 'help_support_phone_enabled': True,
+}
+
 
 class SettingTestCase(APITestCase):
     """An admin, a customer, and the two endpoints - what every test here
@@ -107,7 +116,12 @@ class ReadingTests(SettingTestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
-            response.data, {'android_app_url': '', 'ios_app_url': '', 'updated_at': None},
+            response.data,
+            {
+                'android_app_url': '', 'ios_app_url': '',
+                **HELP_SUPPORT_DEFAULTS,
+                'updated_at': None,
+            },
         )
 
     def test_it_reads_back_what_was_saved(self):
@@ -122,7 +136,10 @@ class ReadingTests(SettingTestCase):
     def test_it_carries_only_what_the_app_uses(self):
         self._saved(android_app_url=PLAY)
 
-        self.assertEqual(set(self._get().data), {'android_app_url', 'ios_app_url', 'updated_at'})
+        self.assertEqual(
+            set(self._get().data),
+            {'android_app_url', 'ios_app_url', 'updated_at', *HELP_SUPPORT_DEFAULTS},
+        )
 
     def test_an_option_that_was_never_set_reads_blank_beside_one_that_was(self):
         self._saved(android_app_url=PLAY)
@@ -306,6 +323,88 @@ class WritingTests(SettingTestCase):
         self.assertEqual(response.data['android_app_url'], PLAY)
         self.assertEqual(after.updated_at, before.updated_at)
         self.assertEqual(after.updated_by, before.updated_by)
+
+
+class HelpSupportFieldTests(SettingTestCase):
+    """Each contact channel has its own value and its own switch, saved and
+    read the same way as android/iOS but independent of one another."""
+
+    def test_every_channel_defaults_to_blank_and_switched_on(self):
+        self.assertEqual(self._get().data, {
+            'android_app_url': '', 'ios_app_url': '',
+            **HELP_SUPPORT_DEFAULTS,
+            'updated_at': None,
+        })
+
+    def test_a_channel_s_value_and_switch_are_saved_together(self):
+        self._saved(help_support_email='support@cncgroupjony.com', help_support_email_enabled=False)
+
+        data = self._get().data
+        self.assertEqual(data['help_support_email'], 'support@cncgroupjony.com')
+        self.assertFalse(data['help_support_email_enabled'])
+
+    def test_each_channel_is_independent_of_the_others(self):
+        self._saved(help_support_whatsapp='8801000000000', help_support_telegram='cncgroupjony')
+
+        setting = AppSetting.current()
+        self.assertEqual(setting.help_support_whatsapp, '8801000000000')
+        self.assertEqual(setting.help_support_telegram, 'cncgroupjony')
+        self.assertEqual(setting.help_support_email, '')
+        self.assertTrue(setting.help_support_whatsapp_enabled, 'untouched switches stay on')
+
+    def test_a_blank_value_switches_a_channel_off_without_touching_its_switch(self):
+        self._saved(help_support_phone='+8801000000000', help_support_phone_enabled=False)
+
+        self._saved(help_support_phone='')
+
+        setting = AppSetting.current()
+        self.assertEqual(setting.help_support_phone, '')
+        self.assertFalse(setting.help_support_phone_enabled, 'the switch is a separate field')
+
+    def test_null_clears_a_channel_s_value_too(self):
+        self._saved(help_support_whatsapp='+8801000000000')
+
+        self._saved(help_support_whatsapp=None)
+
+        self.assertEqual(AppSetting.current().help_support_whatsapp, '')
+
+    def test_the_switch_can_be_changed_without_sending_the_value(self):
+        self._saved(help_support_email='support@cncgroupjony.com')
+
+        self._saved(help_support_email_enabled=False)
+
+        setting = AppSetting.current()
+        self.assertEqual(setting.help_support_email, 'support@cncgroupjony.com', 'the value stays')
+        self.assertFalse(setting.help_support_email_enabled)
+
+    def test_an_invalid_email_is_refused(self):
+        response = self._patch(help_support_email='not-an-email')
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('help_support_email', response.data)
+        self.assertFalse(AppSetting.objects.exists())
+
+    def test_a_valid_email_is_accepted(self):
+        response = self._patch(help_support_email='support@cncgroupjony.com')
+
+        self.assertEqual(response.status_code, 200, response.data)
+
+    def test_whatsapp_telegram_and_phone_are_not_validated_as_email(self):
+        response = self._patch(
+            help_support_whatsapp='+880 1000-000000',
+            help_support_telegram='@cncgroupjony',
+            help_support_phone='+880 1000-000000',
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+
+    def test_it_carries_the_help_support_fields_and_nothing_extra(self):
+        self._saved(help_support_email='support@cncgroupjony.com')
+
+        self.assertEqual(
+            set(self._get().data),
+            {'android_app_url', 'ios_app_url', 'updated_at', *HELP_SUPPORT_DEFAULTS},
+        )
 
 
 class ValidationTests(SettingTestCase):

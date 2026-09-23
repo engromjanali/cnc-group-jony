@@ -39,7 +39,10 @@ class DesignFixtures(APITestCase):
             status=StoredFile.Status.READY,
         )
 
-    def _design(self, title, category=None, *, image=True, design_file=False, sub_category=None):
+    def _design(
+        self, title, category=None, *, image=True, design_file=False, sub_category=None,
+        is_paid=None, amount=None,
+    ):
         return Design.objects.create(
             category=category or self.beds,
             sub_category=sub_category,
@@ -49,6 +52,8 @@ class DesignFixtures(APITestCase):
                 self._stored(StoredFile.Provider.R2, f'{title}.dxf') if design_file else None
             ),
             design_file_name=f'{title}.dxf' if design_file else '',
+            **({} if is_paid is None else {'is_paid': is_paid}),
+            **({} if amount is None else {'amount': amount}),
         )
 
 
@@ -164,7 +169,10 @@ class DesignListTests(DesignFixtures):
 
     def test_an_item_has_what_a_card_and_the_details_screen_need(self):
         sub = SubCategory.objects.create(category=self.beds, label='King')
-        design = self._design('Headboard', sub_category=sub, design_file=True)
+        design = self._design(
+            'Headboard', sub_category=sub, design_file=True,
+            is_paid=True, amount='9.99',
+        )
 
         item = self._list().data['results'][0]
 
@@ -173,6 +181,9 @@ class DesignListTests(DesignFixtures):
         self.assertEqual(item['category_id'], self.beds.id)
         self.assertEqual(item['category_label'], 'Beds')
         self.assertEqual(item['sub_category_label'], 'King')
+        self.assertEqual(item['design_type'], '2d')
+        self.assertIs(item['is_paid'], True)
+        self.assertEqual(item['amount'], '9.99')
         self.assertTrue(item['has_design_file'])
         self.assertIn('demo-cloud', item['image_url'])
         self.assertIn(design.image_file.storage_key, item['image_url'])

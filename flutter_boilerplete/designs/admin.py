@@ -18,6 +18,6 @@ class SubCategoryAdmin(admin.ModelAdmin):
 
 @admin.register(Design)
 class DesignAdmin(admin.ModelAdmin):
-    list_display = ('id', 'title', 'category', 'sub_category', 'created_at')
-    list_filter = ('category', 'sub_category')
+    list_display = ('id', 'title', 'category', 'sub_category', 'design_type', 'is_paid', 'amount', 'created_at')
+    list_filter = ('category', 'sub_category', 'design_type', 'is_paid')
     search_fields = ('title',)

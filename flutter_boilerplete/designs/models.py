@@ -33,11 +33,24 @@ class SubCategory(models.Model):
 
 
 class Design(models.Model):
+    class DesignType(models.TextChoices):
+        TWO_D = '2d', '2D'
+        THREE_D = '3d', '3D'
+
     category = models.ForeignKey(Category, related_name='designs', on_delete=models.PROTECT)
     sub_category = models.ForeignKey(
         SubCategory, related_name='designs', on_delete=models.SET_NULL, null=True, blank=True,
     )
     title = models.CharField(max_length=255)
+    # Shown as a 2D/3D toggle in the add/edit form; 2D unless the admin picks 3D.
+    design_type = models.CharField(
+        max_length=2, choices=DesignType.choices, default=DesignType.TWO_D,
+    )
+    # Shown as an unchecked-by-default checkbox in the add/edit form.
+    is_paid = models.BooleanField(default=False)
+    # Required, and must be greater than zero, whenever is_paid is set; null
+    # for a free design.
+    amount = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     # Preview image uploaded straight to Cloudinary. Takes precedence over the
     # legacy `image` / `image_url` fields, which only older designs still use.
     image_file = models.ForeignKey(

@@ -9,7 +9,14 @@ from .serializers import AppSettingSerializer
 
 # What a client gets before any setting has been saved: the same fields, all
 # blank, so it never has to handle a different shape.
-NOT_SET_YET = {'android_app_url': '', 'ios_app_url': '', 'updated_at': None}
+NOT_SET_YET = {
+    'android_app_url': '', 'ios_app_url': '',
+    'help_support_email': '', 'help_support_email_enabled': True,
+    'help_support_whatsapp': '', 'help_support_whatsapp_enabled': True,
+    'help_support_telegram': '', 'help_support_telegram_enabled': True,
+    'help_support_phone': '', 'help_support_phone_enabled': True,
+    'updated_at': None,
+}
 
 
 class AppSettingView(APIView):

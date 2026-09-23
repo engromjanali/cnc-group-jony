@@ -2,7 +2,7 @@ from django.conf import settings
 from django.db import models
 from django.db.models import Q
 
-from .limits import MAX_URL_LENGTH
+from .limits import MAX_CONTACT_LENGTH, MAX_URL_LENGTH
 
 
 class AppSetting(models.Model):
@@ -21,6 +21,18 @@ class AppSetting(models.Model):
     android_app_url = models.CharField(max_length=MAX_URL_LENGTH, blank=True, default='')
     # Where the iOS app can be installed from - the App Store page or TestFlight.
     ios_app_url = models.CharField(max_length=MAX_URL_LENGTH, blank=True, default='')
+
+    # Help & Support contact channels shown to every user. Each has its own
+    # value and its own switch, so an admin can hide a channel without losing
+    # the value already saved for it.
+    help_support_email = models.CharField(max_length=MAX_CONTACT_LENGTH, blank=True, default='')
+    help_support_email_enabled = models.BooleanField(default=True)
+    help_support_whatsapp = models.CharField(max_length=MAX_CONTACT_LENGTH, blank=True, default='')
+    help_support_whatsapp_enabled = models.BooleanField(default=True)
+    help_support_telegram = models.CharField(max_length=MAX_CONTACT_LENGTH, blank=True, default='')
+    help_support_telegram_enabled = models.BooleanField(default=True)
+    help_support_phone = models.CharField(max_length=MAX_CONTACT_LENGTH, blank=True, default='')
+    help_support_phone_enabled = models.BooleanField(default=True)
 
     updated_at = models.DateTimeField(auto_now=True)
     # Who saved it last. Kept as a record only: deleting that account leaves

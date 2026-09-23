@@ -7,6 +7,22 @@ from .models import AppSetting
 class AppSettingAdmin(admin.ModelAdmin):
     list_display = ('__str__', 'android_app_url', 'ios_app_url', 'updated_at')
     readonly_fields = ('updated_at', 'updated_by')
+    fieldsets = (
+        ('App install links', {
+            'fields': ('android_app_url', 'ios_app_url'),
+        }),
+        ('Help & Support', {
+            'fields': (
+                ('help_support_email', 'help_support_email_enabled'),
+                ('help_support_whatsapp', 'help_support_whatsapp_enabled'),
+                ('help_support_telegram', 'help_support_telegram_enabled'),
+                ('help_support_phone', 'help_support_phone_enabled'),
+            ),
+        }),
+        (None, {
+            'fields': ('updated_at', 'updated_by'),
+        }),
+    )
 
     def has_add_permission(self, request):
         # One document: once it exists it is edited, not added to.

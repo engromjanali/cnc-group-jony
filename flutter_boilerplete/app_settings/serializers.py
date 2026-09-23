@@ -1,7 +1,7 @@
-from django.core.validators import URLValidator
+from django.core.validators import EmailValidator, URLValidator
 from rest_framework import serializers
 
-from .limits import MAX_URL_LENGTH
+from .limits import MAX_CONTACT_LENGTH, MAX_URL_LENGTH
 from .models import AppSetting
 
 # Only web links. The app opens these in a new browser tab, so anything else -
@@ -27,6 +27,21 @@ class UrlField(serializers.CharField):
         return '' if value is None else value
 
 
+class ContactField(serializers.CharField):
+    """A contact value (email, phone number, username) that may be blank,
+    which switches the channel off. `null` clears it too."""
+
+    def __init__(self, **kwargs):
+        super().__init__(
+            required=False, allow_blank=True, allow_null=True,
+            max_length=MAX_CONTACT_LENGTH, **kwargs,
+        )
+
+    def run_validation(self, data=serializers.empty):
+        value = super().run_validation(data)
+        return '' if value is None else value
+
+
 class AppSettingSerializer(serializers.ModelSerializer):
     """The app settings as the app reads and writes them.
 
@@ -37,7 +52,25 @@ class AppSettingSerializer(serializers.ModelSerializer):
     android_app_url = UrlField()
     ios_app_url = UrlField()
 
+    help_support_email = ContactField(
+        validators=[EmailValidator(message='Enter a valid email address.')],
+    )
+    help_support_email_enabled = serializers.BooleanField(required=False)
+    help_support_whatsapp = ContactField()
+    help_support_whatsapp_enabled = serializers.BooleanField(required=False)
+    help_support_telegram = ContactField()
+    help_support_telegram_enabled = serializers.BooleanField(required=False)
+    help_support_phone = ContactField()
+    help_support_phone_enabled = serializers.BooleanField(required=False)
+
     class Meta:
         model = AppSetting
-        fields = ('android_app_url', 'ios_app_url', 'updated_at')
+        fields = (
+            'android_app_url', 'ios_app_url',
+            'help_support_email', 'help_support_email_enabled',
+            'help_support_whatsapp', 'help_support_whatsapp_enabled',
+            'help_support_telegram', 'help_support_telegram_enabled',
+            'help_support_phone', 'help_support_phone_enabled',
+            'updated_at',
+        )
         read_only_fields = ('updated_at',)

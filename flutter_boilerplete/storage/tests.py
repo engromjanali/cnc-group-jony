@@ -136,6 +136,49 @@ class AddDesignTests(_ProvidersMixin, APITestCase):
         self.assertFalse(design.image)
         self.assertFalse(design.design_file)
 
+    def test_design_type_defaults_to_2d_and_is_paid_defaults_to_false(self):
+        response = self._add()
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data['design_type'], '2d')
+        self.assertIs(response.data['is_paid'], False)
+        self.assertIsNone(response.data['amount'])
+
+    def test_design_type_and_is_paid_can_be_set_explicitly(self):
+        response = self._add(design_type='3d', is_paid=True, amount='19.99')
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data['design_type'], '3d')
+        self.assertIs(response.data['is_paid'], True)
+        self.assertEqual(response.data['amount'], '19.99')
+
+    def test_rejects_an_unknown_design_type(self):
+        response = self._add(design_type='4d')
+        self.assertEqual(response.status_code, 400)
+
+    def test_a_paid_design_needs_an_amount(self):
+        response = self._add(is_paid=True)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('amount', response.data)
+        self.assertFalse(Design.objects.exists())
+
+    def test_a_paid_design_s_amount_cannot_be_zero(self):
+        response = self._add(is_paid=True, amount='0')
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('amount', response.data)
+
+    def test_a_paid_design_s_amount_cannot_be_negative(self):
+        response = self._add(is_paid=True, amount='-5')
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('amount', response.data)
+
+    def test_a_free_design_s_amount_is_cleared_even_if_one_is_sent(self):
+        response = self._add(is_paid=False, amount='19.99')
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertIsNone(response.data['amount'])
+
+    def test_a_free_design_needs_no_amount(self):
+        response = self._add(is_paid=False)
+        self.assertEqual(response.status_code, 201, response.data)
+
     def test_a_design_without_a_cutting_file_is_allowed(self):
         response = self._add(design_file=None)
         self.assertEqual(response.status_code, 201, response.data)
@@ -272,6 +315,43 @@ class UpdateAndDeleteDesignTests(_ProvidersMixin, APITestCase):
         self.assertEqual([p for p, *_ in self.providers.stored], ['cloudinary'])
         self.assertEqual([p for p, _ in self.providers.deleted], ['cloudinary'])
         self.assertTrue(StoredFile.objects.filter(pk=self.old_image.pk).exists())
+
+    def test_switching_to_paid_without_an_amount_is_refused(self):
+        response = self._patch(is_paid=True)
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('amount', response.data)
+        self.design.refresh_from_db()
+        self.assertFalse(self.design.is_paid)
+
+    def test_switching_to_paid_with_an_amount_succeeds(self):
+        response = self._patch(is_paid=True, amount='12.50')
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.design.refresh_from_db()
+        self.assertTrue(self.design.is_paid)
+        self.assertEqual(str(self.design.amount), '12.50')
+
+    def test_switching_a_paid_design_back_to_free_clears_its_amount(self):
+        self._patch(is_paid=True, amount='12.50')
+
+        response = self._patch(is_paid=False)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.design.refresh_from_db()
+        self.assertFalse(self.design.is_paid)
+        self.assertIsNone(self.design.amount)
+
+    def test_editing_unrelated_fields_leaves_a_paid_design_s_amount_alone(self):
+        self._patch(is_paid=True, amount='12.50')
+
+        response = self._patch(title='Renamed')
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.design.refresh_from_db()
+        self.assertEqual(self.design.title, 'Renamed')
+        self.assertTrue(self.design.is_paid)
+        self.assertEqual(str(self.design.amount), '12.50')
 
     def test_deleting_a_design_removes_its_files_from_storage(self):
         response = self.client.delete(reverse('admin-design-delete', args=[self.design.id]))

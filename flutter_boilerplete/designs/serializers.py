@@ -147,11 +147,23 @@ class DesignWriteSerializer(serializers.ModelSerializer):
     sub_category_label = serializers.CharField(required=False, allow_blank=True, write_only=True)
     image = serializers.ImageField(write_only=True, required=False)
     design_file = serializers.FileField(write_only=True, required=False)
+    # Declared explicitly (rather than left to ModelSerializer's auto field):
+    # for multipart data, DRF's BooleanField treats a missing key as an
+    # unchecked HTML checkbox and reads it as False unless the field carries
+    # its own `default` - the model's `default=False` alone is not enough to
+    # survive an add request that omits `is_paid`.
+    is_paid = serializers.BooleanField(default=False)
+    # Required, and checked against zero, only when the design is paid -
+    # see `validate()`. Free either way when left out of a partial update.
+    amount = serializers.DecimalField(
+        max_digits=10, decimal_places=2, required=False, allow_null=True,
+    )
 
     class Meta:
         model = Design
         fields = (
             'id', 'category', 'sub_category', 'sub_category_label', 'title',
+            'design_type', 'is_paid', 'amount',
             'image', 'image_url',
             'design_file', 'design_file_url', 'design_file_name',
             'description',
@@ -203,6 +215,22 @@ class DesignWriteSerializer(serializers.ModelSerializer):
 
         if attrs.get('design_file') and not attrs.get('design_file_name'):
             attrs['design_file_name'] = attrs['design_file'].name
+
+        # A paid design always has a positive amount; a free one never does -
+        # switching `is_paid` off clears whatever amount was set, and turning
+        # it on demands one rather than silently keeping a stale or missing
+        # value from before.
+        is_paid = attrs['is_paid'] if 'is_paid' in attrs else getattr(self.instance, 'is_paid', False)
+        amount = attrs['amount'] if 'amount' in attrs else getattr(self.instance, 'amount', None)
+        if is_paid:
+            if amount is None or amount <= 0:
+                raise serializers.ValidationError(
+                    {'amount': 'Enter an amount greater than 0 for a paid design.'}
+                )
+            attrs['amount'] = amount
+        else:
+            attrs['amount'] = None
+
         return attrs
 
     def create(self, validated_data):
@@ -278,6 +306,7 @@ class DesignDetailSerializer(serializers.ModelSerializer):
         model = Design
         fields = (
             'id', 'title', 'category_id', 'category_label', 'sub_category_label',
+            'design_type', 'is_paid', 'amount',
             'image_url', 'description', 'design_file_url', 'design_file_name',
             'has_design_file', 'created_at',
         )

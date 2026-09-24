@@ -9,3 +9,8 @@ __pycache__/
 *.pyc
 db.sqlite3
 .DS_Store
+
+# Firebase service account keys are SECRETS - never commit them
+*firebase-adminsdk*.json
+*serviceAccount*.json
+*service-account*.json

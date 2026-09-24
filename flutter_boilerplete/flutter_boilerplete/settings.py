@@ -268,6 +268,24 @@ CRON_SECRET = os.environ.get('CRON_SECRET', '')
 # issued for this Firebase project.
 FIREBASE_PROJECT_ID = os.environ.get('FIREBASE_PROJECT_ID', '')
 
+# The service account the Firebase Admin SDK verifies those tokens with (Firebase
+# console -> Project settings -> Service accounts -> Generate new private key).
+# Give the key file's contents as one line in FIREBASE_SERVICE_ACCOUNT_JSON (for
+# hosts with no files, like Vercel), or a path to it in
+# FIREBASE_SERVICE_ACCOUNT_FILE (local development). It is a SECRET: it belongs
+# in .env / the host's dashboard, never in the repository. With neither set,
+# Google sign-in is refused rather than falling back to a weaker check. The
+# project is the key's own; FIREBASE_PROJECT_ID, if set, must match it.
+FIREBASE_SERVICE_ACCOUNT_JSON = os.environ.get('FIREBASE_SERVICE_ACCOUNT_JSON', '')
+FIREBASE_SERVICE_ACCOUNT_FILE = os.environ.get('FIREBASE_SERVICE_ACCOUNT_FILE', '')
+
+# Besides checking a token's signature, ask Firebase whether it was revoked and
+# whether that Firebase user was disabled or deleted. Needs the service account
+# to be allowed to read Firebase users (IAM role "Firebase Authentication
+# Admin"). Leave on; turn off (False) only knowingly, e.g. while that role is
+# being granted - signature, expiry, audience and issuer are still checked.
+FIREBASE_CHECK_REVOKED = os.environ.get('FIREBASE_CHECK_REVOKED', 'True') == 'True'
+
 
 # Email
 # https://docs.djangoproject.com/en/6.1/topics/email/#topic-email-configuration

@@ -1,7 +1,10 @@
+import logging
+
 from django.contrib.auth import authenticate
 from django.contrib.auth.password_validation import validate_password
 from django.db import IntegrityError, transaction
 from rest_framework import serializers
+from rest_framework.exceptions import APIException
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from storage.models import StoredFile
@@ -11,6 +14,16 @@ from storage.validators import validate_image_upload
 
 from . import firebase, password_reset
 from .models import User
+
+logger = logging.getLogger(__name__)
+
+
+class GoogleSignInUnavailable(APIException):
+    """503: Google sign-in can't be checked right now (a server-side problem)."""
+
+    status_code = 503
+    default_detail = 'Google sign-in is not available right now. Please try again later.'
+    default_code = 'google_sign_in_unavailable'
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -145,6 +158,12 @@ class GoogleLoginSerializer(serializers.Serializer):
             claims = firebase.verify_firebase_token(attrs['id_token'])
         except firebase.InvalidFirebaseToken as error:
             raise serializers.ValidationError({'id_token': str(error)})
+        except firebase.FirebaseNotConfigured:
+            # Our problem, not the caller's: say so, and log why for us.
+            logger.error('Google sign-in is not configured', exc_info=True)
+            raise GoogleSignInUnavailable()
+        except firebase.FirebaseUnavailable:
+            raise GoogleSignInUnavailable()
 
         if firebase.provider_of(claims) != firebase.GOOGLE:
             raise serializers.ValidationError(

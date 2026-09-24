@@ -124,7 +124,10 @@ class AdminUserManagementTests(APITestCase):
 
 from unittest.mock import patch  # noqa: E402
 
+from django.conf import settings  # noqa: E402
 from django.test import override_settings  # noqa: E402
+
+from firebase_admin import auth  # noqa: E402
 
 from . import firebase  # noqa: E402
 
@@ -241,19 +244,66 @@ class GoogleLoginTests(APITestCase):
         self.assertFalse(profile.data['password_set'])
 
 
-@override_settings(FIREBASE_PROJECT_ID='cncgroupjony')
-class VerifyFirebaseTokenTests(APITestCase):
-    """The verifier itself, with google-auth's signature check stubbed out."""
+def _fake_service_account(project='cncgroupjony'):
+    """A well-formed service account key (a throwaway RSA key, not a real one)."""
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    pem = key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    ).decode()
+    return {
+        'type': 'service_account',
+        'project_id': project,
+        'private_key_id': 'test-key-id',
+        'private_key': pem,
+        'client_email': f'firebase-adminsdk@{project}.iam.gserviceaccount.com',
+        'client_id': '1234567890',
+        'token_uri': 'https://oauth2.googleapis.com/token',
+    }
+
+
+class _FirebaseModuleState(APITestCase):
+    """Each test starts with no Admin SDK app, and leaves none behind."""
+
+    def setUp(self):
+        self._reset_app()
+
+    def tearDown(self):
+        self._reset_app()
+
+    @staticmethod
+    def _reset_app():
+        import firebase_admin
+        if firebase._app is not None:
+            try:
+                firebase_admin.delete_app(firebase._app)
+            except ValueError:
+                pass
+        firebase._app = None
+
+
+class VerifyFirebaseTokenTests(_FirebaseModuleState):
+    """The verifier, with the Admin SDK's own network call stubbed out."""
 
     def _verify(self, claims=None, error=None):
-        target = 'accounts.firebase.id_token.verify_firebase_token'
-        with patch(target, return_value=claims, side_effect=error) as verify:
+        with patch.object(firebase, '_firebase_app', return_value='the-app'), \
+             patch('accounts.firebase.auth.verify_id_token', return_value=claims, side_effect=error) as verify:
             return firebase.verify_firebase_token('tok'), verify
 
-    def test_it_checks_the_token_against_this_firebase_project(self):
+    def _fails_with(self, exception, **kwargs):
+        with self.assertRaises(exception):
+            self._verify(**kwargs)
+
+    def test_it_uses_the_admin_sdk_and_asks_firebase_whether_it_was_revoked(self):
         _, verify = self._verify(_claims())
 
-        self.assertEqual(verify.call_args.kwargs['audience'], 'cncgroupjony')
+        self.assertEqual(verify.call_args.args, ('tok',))
+        self.assertEqual(verify.call_args.kwargs['app'], 'the-app')
+        self.assertIs(verify.call_args.kwargs['check_revoked'], True)
 
     def test_a_google_sign_in_is_accepted(self):
         claims, _ = self._verify(_claims('google.com'))
@@ -264,29 +314,244 @@ class VerifyFirebaseTokenTests(APITestCase):
         for provider in ('password', 'facebook.com', 'phone', 'anonymous', 'custom', None):
             with self.assertRaises(firebase.InvalidFirebaseToken, msg=provider):
                 self._verify(_claims(provider))
-        with self.assertRaises(firebase.InvalidFirebaseToken):
-            self._verify(_claims(firebase={}))
+        self._fails_with(firebase.InvalidFirebaseToken, claims=_claims(firebase={}))
 
-    def test_a_bad_signature_or_expired_token_is_rejected(self):
-        with self.assertRaises(firebase.InvalidFirebaseToken):
-            self._verify(error=ValueError('Token expired'))
-        with self.assertRaises(firebase.InvalidFirebaseToken):
-            self._verify(claims=None)
+    def test_every_way_the_sdk_calls_a_token_bad_is_an_invalid_token(self):
+        for error in (
+            auth.InvalidIdTokenError('forged'),
+            auth.ExpiredIdTokenError('expired', ValueError()),
+            auth.RevokedIdTokenError('revoked'),
+            auth.UserDisabledError('the Firebase user is disabled'),
+            auth.UserNotFoundError('the Firebase user was deleted'),
+            ValueError('not a JWT'),
+        ):
+            with self.assertRaises(firebase.InvalidFirebaseToken, msg=type(error).__name__):
+                self._verify(error=error)
+
+    def test_firebase_being_unreachable_is_our_problem_not_an_invalid_token(self):
+        with self.assertLogs('accounts.firebase', level='ERROR'):
+            for error in (auth.CertificateFetchError('no network', ValueError()), OSError('boom')):
+                with self.assertRaises(firebase.FirebaseUnavailable):
+                    self._verify(error=error)
+
+    def test_a_service_account_that_cannot_read_users_is_a_setup_problem_with_a_clear_message(self):
+        from firebase_admin import _auth_utils
+        error = _auth_utils.InsufficientPermissionError('INSUFFICIENT_PERMISSION', None, None)
+        with override_settings(FIREBASE_SERVICE_ACCOUNT_JSON='', FIREBASE_SERVICE_ACCOUNT_FILE=''):
+            with self.assertLogs('accounts.firebase', level='ERROR') as logged:
+                with self.assertRaises(firebase.FirebaseNotConfigured):
+                    self._verify(error=error)
+
+        # Says what to do - and is one line, not a stack trace on every attempt.
+        self.assertIn('Firebase Authentication Admin', logged.output[0])
+        self.assertNotIn('Traceback', logged.output[0])
+
+    def test_the_revocation_check_can_be_turned_off_knowingly(self):
+        with override_settings(FIREBASE_CHECK_REVOKED=False):
+            _, verify = self._verify(_claims())
+        self.assertIs(verify.call_args.kwargs['check_revoked'], False)
+
+        # ...and everything else is still checked.
+        with override_settings(FIREBASE_CHECK_REVOKED=False):
+            with self.assertRaises(firebase.InvalidFirebaseToken):
+                self._verify(_claims('password'))
+            with self.assertRaises(firebase.InvalidFirebaseToken):
+                self._verify(error=auth.InvalidIdTokenError('forged'))
+
+    def test_it_is_on_by_default(self):
+        self.assertIs(settings.FIREBASE_CHECK_REVOKED, True)
 
     def test_an_unverified_or_missing_email_is_rejected(self):
-        with self.assertRaises(firebase.InvalidFirebaseToken):
-            self._verify(_claims(email_verified=False))
-        with self.assertRaises(firebase.InvalidFirebaseToken):
-            self._verify(_claims(email=''))
+        self._fails_with(firebase.InvalidFirebaseToken, claims=_claims(email_verified=False))
+        self._fails_with(firebase.InvalidFirebaseToken, claims=_claims(email=''))
 
     def test_a_token_with_no_firebase_user_id_is_rejected(self):
-        with self.assertRaises(firebase.InvalidFirebaseToken):
-            self._verify(_claims(sub=''))
+        self._fails_with(firebase.InvalidFirebaseToken, claims=_claims(sub=''))
 
-    def test_garbage_is_rejected_by_the_real_library(self):
-        for token in ('garbage', 'a.b.c'):
-            with self.assertRaises(firebase.InvalidFirebaseToken):
-                firebase.verify_firebase_token(token)
+
+class FirebaseServiceAccountTests(_FirebaseModuleState):
+    """Where the service account comes from, and that nothing works without one."""
+
+    def test_with_none_configured_it_refuses_rather_than_falling_back(self):
+        with override_settings(FIREBASE_SERVICE_ACCOUNT_JSON='', FIREBASE_SERVICE_ACCOUNT_FILE=''):
+            with self.assertRaises(firebase.FirebaseNotConfigured):
+                firebase.verify_firebase_token('anything')
+
+    def test_json_in_the_environment_is_used(self):
+        import json
+        with override_settings(
+            FIREBASE_SERVICE_ACCOUNT_JSON=json.dumps(_fake_service_account()),
+            FIREBASE_SERVICE_ACCOUNT_FILE='', FIREBASE_PROJECT_ID='cncgroupjony',
+        ):
+            _, project = firebase._credential()
+
+        self.assertEqual(project, 'cncgroupjony')
+
+    def test_the_same_value_works_as_json_or_as_base64(self):
+        import base64
+        import json
+        key = json.dumps(_fake_service_account())
+        for value in (key, base64.b64encode(key.encode()).decode()):
+            with override_settings(
+                FIREBASE_SERVICE_ACCOUNT_JSON=value, FIREBASE_SERVICE_ACCOUNT_FILE='',
+                FIREBASE_PROJECT_ID='cncgroupjony',
+            ):
+                _, project = firebase._credential()
+            self.assertEqual(project, 'cncgroupjony')
+
+    def test_a_double_quoted_env_value_with_real_line_breaks_still_loads(self):
+        import json
+        # What a .env parser hands over when the key's \n escapes were turned
+        # into actual line breaks by double quotes.
+        mangled = json.dumps(_fake_service_account()).replace('\\n', '\n')
+        with self.assertRaises(ValueError):
+            json.loads(mangled)  # strict JSON really would refuse this
+        with override_settings(
+            FIREBASE_SERVICE_ACCOUNT_JSON=mangled, FIREBASE_SERVICE_ACCOUNT_FILE='',
+            FIREBASE_PROJECT_ID='cncgroupjony',
+        ):
+            _, project = firebase._credential()
+
+        self.assertEqual(project, 'cncgroupjony')
+
+    def test_something_that_is_neither_json_nor_base64_is_reported(self):
+        with override_settings(
+            FIREBASE_SERVICE_ACCOUNT_JSON='this is !! not a key', FIREBASE_SERVICE_ACCOUNT_FILE='',
+        ):
+            with self.assertRaisesMessage(firebase.FirebaseNotConfigured, 'neither JSON nor base64'):
+                firebase._credential()
+
+    def test_the_example_key_from_env_example_is_reported_not_used(self):
+        import json
+        example = dict(_fake_service_account(), private_key_id=firebase.EXAMPLE_KEY_ID)
+        with override_settings(
+            FIREBASE_SERVICE_ACCOUNT_JSON=json.dumps(example), FIREBASE_SERVICE_ACCOUNT_FILE='',
+            FIREBASE_PROJECT_ID='',
+        ):
+            with self.assertRaisesMessage(firebase.FirebaseNotConfigured, 'EXAMPLE key'):
+                firebase._credential()
+
+    def test_the_example_in_env_example_is_well_formed_but_refused(self):
+        """The shipped example must look real (valid base64, JSON, PEM) so it shows
+        the format - and still never be mistaken for a working key."""
+        import base64
+        import json
+        import pathlib
+        from firebase_admin import credentials
+
+        env_example = pathlib.Path(__file__).resolve().parents[2] / '.env.example'
+        line = next(
+            ln for ln in env_example.read_text().splitlines()
+            if ln.startswith('FIREBASE_SERVICE_ACCOUNT_JSON=')
+        )
+        value = line.split('=', 1)[1]
+        info = json.loads(base64.b64decode(value, validate=True))
+
+        self.assertEqual(info['type'], 'service_account')
+        self.assertTrue(info['client_email'].startswith('firebase-adminsdk-'))
+        credentials.Certificate(info)  # a real-shaped key: the SDK accepts its format
+        with override_settings(FIREBASE_SERVICE_ACCOUNT_JSON=value, FIREBASE_SERVICE_ACCOUNT_FILE=''):
+            with self.assertRaisesMessage(firebase.FirebaseNotConfigured, 'EXAMPLE key'):
+                firebase._credential()
+
+    def test_a_key_file_is_used_too(self):
+        import json
+        import tempfile
+        with tempfile.NamedTemporaryFile('w', suffix='.json', delete=False) as key_file:
+            json.dump(_fake_service_account(), key_file)
+        with override_settings(
+            FIREBASE_SERVICE_ACCOUNT_JSON='', FIREBASE_SERVICE_ACCOUNT_FILE=key_file.name,
+            FIREBASE_PROJECT_ID='',
+        ):
+            _, project = firebase._credential()
+
+        self.assertEqual(project, 'cncgroupjony')
+
+    def test_the_project_comes_from_the_key_when_none_is_set(self):
+        import json
+        with override_settings(
+            FIREBASE_SERVICE_ACCOUNT_JSON=json.dumps(_fake_service_account('other-project')),
+            FIREBASE_SERVICE_ACCOUNT_FILE='', FIREBASE_PROJECT_ID='',
+        ):
+            _, project = firebase._credential()
+
+        self.assertEqual(project, 'other-project')
+
+    def test_a_key_for_another_project_is_refused(self):
+        import json
+        with override_settings(
+            FIREBASE_SERVICE_ACCOUNT_JSON=json.dumps(_fake_service_account('other-project')),
+            FIREBASE_SERVICE_ACCOUNT_FILE='', FIREBASE_PROJECT_ID='cncgroupjony',
+        ):
+            with self.assertRaisesMessage(firebase.FirebaseNotConfigured, 'other-project'):
+                firebase._credential()
+
+    def test_broken_configuration_is_reported_not_crashed_on(self):
+        for json_value, path in (
+            ('{not json', ''),  # garbled
+            ('', '/no/such/key.json'),  # unreadable file
+            ('{"project_id": "cncgroupjony"}', ''),  # not a service account
+            ('{"type": "service_account"}', ''),  # no project
+        ):
+            with override_settings(
+                FIREBASE_SERVICE_ACCOUNT_JSON=json_value, FIREBASE_SERVICE_ACCOUNT_FILE=path,
+                FIREBASE_PROJECT_ID='',
+            ):
+                with self.assertRaises(firebase.FirebaseNotConfigured, msg=json_value or path):
+                    firebase._credential()
+
+    def test_the_sdk_app_is_created_once_and_reused(self):
+        import json
+        with override_settings(
+            FIREBASE_SERVICE_ACCOUNT_JSON=json.dumps(_fake_service_account()),
+            FIREBASE_SERVICE_ACCOUNT_FILE='', FIREBASE_PROJECT_ID='cncgroupjony',
+        ):
+            first = firebase._firebase_app()
+            second = firebase._firebase_app()
+
+        self.assertIs(first, second)
+        self.assertEqual(first.project_id, 'cncgroupjony')
+
+    def test_garbage_is_rejected_by_the_real_sdk(self):
+        import json
+        with override_settings(
+            FIREBASE_SERVICE_ACCOUNT_JSON=json.dumps(_fake_service_account()),
+            FIREBASE_SERVICE_ACCOUNT_FILE='', FIREBASE_PROJECT_ID='cncgroupjony',
+        ):
+            for token in ('garbage', 'a.b.c', 'eyJhbGciOiJSUzI1NiJ9.eyJhdWQiOiJ4In0.c2ln'):
+                with self.assertRaises(firebase.InvalidFirebaseToken, msg=token):
+                    firebase.verify_firebase_token(token)
+
+
+class GoogleSignInUnavailableTests(APITestCase):
+    """A server-side problem is a 503 the app can show as "try again later",
+    never a 400 that blames the user's sign-in - and never a way in."""
+
+    URL = '/api/v1/auth/google'
+
+    def _login(self, error):
+        with patch(VERIFY, side_effect=error):
+            return self.client.post(self.URL, {'id_token': 'tok'})
+
+    def test_no_service_account_is_a_503_and_creates_nothing(self):
+        with self.assertLogs('accounts.serializers', level='ERROR'):
+            response = self._login(firebase.FirebaseNotConfigured('No Firebase service account'))
+
+        self.assertEqual(response.status_code, 503)
+        self.assertIn('not available', response.data['detail'])
+        self.assertEqual(User.objects.count(), 0)
+
+    def test_the_reason_is_not_leaked_to_the_caller(self):
+        with self.assertLogs('accounts.serializers', level='ERROR'):
+            response = self._login(firebase.FirebaseNotConfigured('the key file is at /secret/path'))
+
+        self.assertNotIn('/secret/path', str(response.data))
+
+    def test_firebase_being_unreachable_is_a_503_too(self):
+        response = self._login(firebase.FirebaseUnavailable('no network'))
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(User.objects.count(), 0)
 
 
 class SetPasswordTests(APITestCase):

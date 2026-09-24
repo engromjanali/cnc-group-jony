@@ -12,6 +12,9 @@ class UserManager(BaseUserManager):
     def _create_user(self, email, password, **extra_fields):
         if not email:
             raise ValueError('Users must have an email address.')
+        # An account made with a password has one; one made without (a Google
+        # sign-up) does not, until the user sets it.
+        extra_fields.setdefault('password_set', bool(password))
         user = self.model(email=self.normalize_email(email), **extra_fields)
         user.set_password(password)
         user.save(using=self._db)
@@ -46,6 +49,14 @@ class User(AbstractUser):
     avatar_file = models.ForeignKey(
         StoredFile, related_name='+', on_delete=models.SET_NULL, null=True, blank=True,
     )
+    # The Firebase Auth user behind this account's Google sign-in - the stable
+    # link to that identity. Email can change; this cannot. Set the first time
+    # the user signs in with Google; blank for an account that has only ever
+    # used email + password (which this backend handles itself, not Firebase).
+    firebase_uid = models.CharField(max_length=128, unique=True, null=True, blank=True)
+    # Whether the account has a password of its own. False for a Google sign-up
+    # until the user sets one (POST /auth/set-password).
+    password_set = models.BooleanField(default=False)
     # Only ever changed by an admin approving a wallet top-up (see the wallet app).
     wallet_balance = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     updated_at = models.DateTimeField(auto_now=True)

@@ -9,14 +9,18 @@ from .views import (
     LogoutView,
     ProfileView,
     RegisterView,
+    SetPasswordView,
 )
 
 urlpatterns = [
     path('auth/register', RegisterView.as_view(), name='register'),
     path('auth/login', LoginView.as_view(), name='login'),
     path('auth/google', GoogleLoginView.as_view(), name='google-login'),
+    path('auth/set-password', SetPasswordView.as_view(), name='set-password'),
     path('auth/logout', LogoutView.as_view(), name='logout'),
     path('auth/refresh', TokenRefreshView.as_view(), name='token-refresh'),
+    # The same view under the path the design doc names.
+    path('auth/token/refresh', TokenRefreshView.as_view(), name='token-refresh-alias'),
     path('user/profile', ProfileView.as_view(), name='profile'),
     path('admin/users/list', AdminUserListView.as_view(), name='admin-user-list'),
     path('admin/users/update/<int:pk>', AdminUserUpdateView.as_view(), name='admin-user-update'),

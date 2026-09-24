@@ -1,5 +1,6 @@
 from django.contrib.auth import authenticate
 from django.contrib.auth.password_validation import validate_password
+from django.db import IntegrityError, transaction
 from rest_framework import serializers
 from rest_framework_simplejwt.tokens import RefreshToken
 
@@ -8,7 +9,7 @@ from storage.services import delivery_url
 from storage.uploads import discard, store_upload
 from storage.validators import validate_image_upload
 
-from . import google
+from . import firebase
 from .models import User
 
 
@@ -27,9 +28,11 @@ class UserSerializer(serializers.ModelSerializer):
         model = User
         fields = (
             'id', 'email', 'first_name', 'last_name', 'phone',
-            'avatar', 'avatar_url', 'wallet_balance', 'date_joined', 'updated_at',
+            'avatar', 'avatar_url', 'wallet_balance', 'password_set', 'date_joined', 'updated_at',
         )
-        read_only_fields = ('id', 'email', 'wallet_balance', 'date_joined', 'updated_at')
+        read_only_fields = (
+            'id', 'email', 'wallet_balance', 'password_set', 'date_joined', 'updated_at',
+        )
 
     def get_avatar_url(self, obj):
         return delivery_url(obj.avatar_file.storage_key) if obj.avatar_file_id else None
@@ -129,33 +132,99 @@ class LoginSerializer(serializers.Serializer):
 
 
 class GoogleLoginSerializer(serializers.Serializer):
-    """Sign in (or sign up) with a Google account.
+    """`POST /auth/google` - sign in (or sign up) with a Google account.
 
-    `id_token` is the Firebase ID token from a Google sign-in. An existing
-    account with that email signs in; otherwise one is created, with no
-    password - it can only be entered through Google."""
+    `id_token` is the Firebase ID token from Firebase Auth's Google provider.
+    It is verified first (`accounts.firebase`), then the local user is found or
+    made - see `_resolve_user` for exactly how."""
 
     id_token = serializers.CharField(write_only=True)
 
     def validate(self, attrs):
         try:
-            claims = google.verify_google_id_token(attrs['id_token'])
-        except google.InvalidGoogleToken as error:
+            claims = firebase.verify_firebase_token(attrs['id_token'])
+        except firebase.InvalidFirebaseToken as error:
             raise serializers.ValidationError({'id_token': str(error)})
 
-        email = User.objects.normalize_email(claims['email'])
-        user = User.objects.filter(email__iexact=email).first()
-        created = user is None
-        if created:
-            first, _, last = (claims.get('name') or '').strip().partition(' ')
-            user = User(email=email, first_name=first[:150], last_name=last.strip()[:150])
-            user.set_unusable_password()
-            user.save()
-        elif not user.is_active:
-            raise serializers.ValidationError('This account has been disabled.')
+        if firebase.provider_of(claims) != firebase.GOOGLE:
+            raise serializers.ValidationError(
+                {'id_token': 'This sign-in did not come from Google.'},
+            )
 
+        user, created = self._resolve_user(claims)
         attrs['user'] = user
         attrs['created'] = created
+        return attrs
+
+    def _resolve_user(self, claims):
+        """The local user for a verified Google sign-in, and whether it is new.
+
+        1. **By Firebase UID** - the stable identity, so a changed email never
+           makes a second account.
+        2. **By email**, when no account carries that UID yet. Google has
+           verified the address (`verify_firebase_token` insists), so the
+           sign-in proves control of the mailbox and the account - say, one
+           made with email + password - is *linked*: it gets the UID and from
+           then on is found by step 1. An account already linked to a
+           *different* Google user is refused, never re-pointed.
+        3. Otherwise a new account, with no password until the user sets one
+           (`POST /auth/set-password`).
+        """
+        uid = claims['sub']
+        email = User.objects.normalize_email(claims['email'])
+
+        user = User.objects.filter(firebase_uid=uid).first()
+        if user is None:
+            user = User.objects.filter(email__iexact=email).first()
+            if user is not None:
+                if user.firebase_uid and user.firebase_uid != uid:
+                    raise serializers.ValidationError(
+                        'This email is already linked to a different Google account.',
+                    )
+                if user.is_active:
+                    user.firebase_uid = uid
+                    user.save(update_fields=['firebase_uid'])
+
+        if user is not None:
+            if not user.is_active:
+                raise serializers.ValidationError('This account has been disabled.')
+            return user, False
+
+        first, _, last = (claims.get('name') or '').strip().partition(' ')
+        user = User(
+            email=email, firebase_uid=uid,
+            first_name=first[:150], last_name=last.strip()[:150],
+        )
+        user.set_unusable_password()
+        try:
+            with transaction.atomic():
+                user.save()
+        except IntegrityError:
+            # Two first sign-ins raced; the other one made the account.
+            return User.objects.get(firebase_uid=uid), False
+        return user, True
+
+
+class SetPasswordSerializer(serializers.Serializer):
+    """Give an account that has no password (a Google sign-up) one, so it can
+    also sign in with email + password through this backend."""
+
+    password = serializers.CharField(write_only=True)
+    password_confirmation = serializers.CharField(write_only=True)
+
+    def validate(self, attrs):
+        user = self.context['request'].user
+        if user.password_set:
+            raise serializers.ValidationError(
+                'This account already has a password. Use "forgot password" to change it.',
+            )
+        if attrs['password'] != attrs['password_confirmation']:
+            raise serializers.ValidationError(
+                {'password_confirmation': 'Passwords do not match.'},
+            )
+        # Also refuses one too close to the email/name, which is why it needs
+        # the user.
+        validate_password(attrs['password'], user=user)
         return attrs
 
 

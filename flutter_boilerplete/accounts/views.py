@@ -13,6 +13,7 @@ from .serializers import (
     LoginSerializer,
     LogoutSerializer,
     RegisterSerializer,
+    SetPasswordSerializer,
     UserSerializer,
     token_pair,
 )
@@ -48,9 +49,14 @@ class LoginView(APIView):
 class GoogleLoginView(APIView):
     """POST /api/v1/auth/google - sign in or sign up with Google.
 
-    Body: `{ "id_token": "<Firebase ID token>" }`. Answers like login, plus
-    `is_new_user`. `400` (`id_token`) when the token is invalid, expired,
-    for another project, or has no verified Google email."""
+    Body: `{ "id_token": "<Firebase ID token>" }` from Firebase Auth's Google
+    provider (the only thing Firebase is used for - email + password accounts
+    live in this backend). Answers `{ user, tokens, is_new_user, password_set }`:
+    `201` when the sign-in made the account, `200` otherwise. `400`
+    (`id_token`) when the token is invalid, expired, for another project, not
+    from Google, or has no verified email; `400` too for a disabled account.
+    Normal API calls then use the returned access token, never the Firebase
+    one."""
 
     permission_classes = [permissions.AllowAny]
 
@@ -64,9 +70,33 @@ class GoogleLoginView(APIView):
                 'user': UserSerializer(user).data,
                 'tokens': token_pair(user),
                 'is_new_user': created,
+                'password_set': user.password_set,
             },
             status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
         )
+
+
+class SetPasswordView(APIView):
+    """POST /api/v1/auth/set-password - give the signed-in account a password.
+
+    Needs the backend access token, so nobody can set a password on an account
+    that is not theirs. Body: `{ "password", "password_confirmation" }`. Only
+    for an account that has none (a Google sign-up): `400` if one is already
+    set, if they differ, or if the password fails Django's validators. Once set,
+    the account can also sign in with email + password (`/auth/login`). Never
+    returns or logs the password."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        serializer = SetPasswordSerializer(data=request.data, context={'request': request})
+        serializer.is_valid(raise_exception=True)
+
+        user = request.user
+        user.set_password(serializer.validated_data['password'])
+        user.password_set = True
+        user.save(update_fields=['password', 'password_set'])
+        return Response({'message': 'Password set successfully.', 'password_set': True})
 
 
 class LogoutView(APIView):

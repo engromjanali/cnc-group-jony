@@ -1,10 +1,14 @@
+from django.db.models import Q
 from rest_framework import generics, permissions, status
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 
+from .models import User
 from .serializers import (
+    AdminUserSerializer,
     LoginSerializer,
     LogoutSerializer,
     RegisterSerializer,
@@ -66,3 +70,51 @@ class ProfileView(generics.RetrieveUpdateAPIView):
 
     def get_object(self):
         return self.request.user
+
+
+class AdminUserPagination(PageNumberPagination):
+    page_size = 20
+    page_size_query_param = 'page_size'
+    max_page_size = 100
+
+
+class AdminUserListView(generics.ListAPIView):
+    """GET /api/v1/admin/users/list?search=&is_active=&page=
+
+    Every account, newest first. `search` matches (case-insensitive) the
+    email, first name or last name; `is_active` (`true`/`false`) filters
+    enabled/disabled accounts. Both are optional and combine."""
+
+    serializer_class = AdminUserSerializer
+    permission_classes = [permissions.IsAdminUser]
+    pagination_class = AdminUserPagination
+
+    def get_queryset(self):
+        queryset = User.objects.all().order_by('-date_joined')
+
+        search = self.request.query_params.get('search', '').strip()
+        if search:
+            queryset = queryset.filter(
+                Q(email__icontains=search)
+                | Q(first_name__icontains=search)
+                | Q(last_name__icontains=search)
+            )
+
+        is_active = self.request.query_params.get('is_active')
+        if is_active is not None:
+            queryset = queryset.filter(is_active=is_active.strip().lower() == 'true')
+
+        return queryset
+
+
+class AdminUserUpdateView(generics.UpdateAPIView):
+    """PUT/PATCH /api/v1/admin/users/update/<id>
+
+    Edits `first_name`, `last_name`, `phone` and/or `is_active`. Setting
+    `is_active` to `false` disables the account: sign-in is refused and every
+    token already issued for it stops working on the next request. An admin
+    cannot disable their own account this way."""
+
+    queryset = User.objects.all()
+    serializer_class = AdminUserSerializer
+    permission_classes = [permissions.IsAdminUser]

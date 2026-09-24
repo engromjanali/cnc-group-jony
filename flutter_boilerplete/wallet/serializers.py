@@ -33,7 +33,7 @@ class WalletTransactionSerializer(serializers.ModelSerializer):
         model = WalletTransaction
         fields = (
             'id', 'user', 'user_email', 'transaction_id', 'sender_number', 'amount',
-            'status', 'created_at', 'reviewed_at',
+            'status', 'source', 'created_at', 'reviewed_at',
         )
 
 
@@ -87,3 +87,11 @@ class PaymentMethodSerializer(serializers.ModelSerializer):
             self.context['request'].user, StoredFile.Provider.CLOUDINARY, icon,
             file_name=icon.name, content_type=icon.content_type,
         )
+
+
+class AdminWalletCreditSerializer(serializers.Serializer):
+    """Admin: add money to a user's wallet directly, with no top-up request
+    behind it - e.g. a refund or a goodwill credit."""
+
+    amount = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal('0.01'))
+    note = serializers.CharField(max_length=200, required=False, allow_blank=True)

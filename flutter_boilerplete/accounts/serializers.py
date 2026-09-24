@@ -57,6 +57,35 @@ class UserSerializer(serializers.ModelSerializer):
         return instance
 
 
+class AdminUserSerializer(serializers.ModelSerializer):
+    """Used by the admin user list and the admin edit endpoint.
+
+    An admin edits `first_name`, `last_name`, `phone` and `is_active` -
+    switching `is_active` off is how an account is disabled, and back on is how
+    it is re-enabled. `email` and `wallet_balance` are read-only here too:
+    email never changes, and the wallet only moves through a top-up approval or
+    the admin credit endpoint, both of which keep their own record of why."""
+
+    avatar_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = (
+            'id', 'email', 'first_name', 'last_name', 'phone', 'avatar_url',
+            'wallet_balance', 'is_active', 'date_joined', 'updated_at',
+        )
+        read_only_fields = ('id', 'email', 'wallet_balance', 'date_joined', 'updated_at')
+
+    def get_avatar_url(self, obj):
+        return delivery_url(obj.avatar_file.storage_key) if obj.avatar_file_id else None
+
+    def validate_is_active(self, value):
+        request = self.context.get('request')
+        if not value and request is not None and self.instance == request.user:
+            raise serializers.ValidationError("You can't disable your own account.")
+        return value
+
+
 class RegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, validators=[validate_password])
     password_confirm = serializers.CharField(write_only=True)

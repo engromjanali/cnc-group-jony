@@ -2,6 +2,7 @@ from django.urls import path
 
 from .views import (
     AdminPaymentMethodAddView,
+    AdminWalletCreditView,
     AdminPaymentMethodDeleteView,
     AdminPaymentMethodListView,
     AdminPaymentMethodUpdateView,
@@ -16,6 +17,10 @@ urlpatterns = [
     path('wallet/add', WalletAddView.as_view(), name='wallet-add'),
     path('admin/wallet/list', AdminWalletListView.as_view(), name='admin-wallet-list'),
     path('admin/wallet/approve/<int:pk>', AdminWalletApproveView.as_view(), name='admin-wallet-approve'),
+    path(
+        'admin/wallet/credit/<int:user_id>',
+        AdminWalletCreditView.as_view(), name='admin-wallet-credit',
+    ),
     path('admin/wallet/deny/<int:pk>', AdminWalletDenyView.as_view(), name='admin-wallet-deny'),
     path('wallet/payment-methods', PaymentMethodListView.as_view(), name='wallet-payment-methods'),
     path(

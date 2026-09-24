@@ -14,6 +14,7 @@ from storage.views import StorageErrorsMixin
 
 from .models import PaymentMethod, WalletTransaction
 from .serializers import (
+    AdminWalletCreditSerializer,
     PaymentMethodSerializer,
     WalletAddSerializer,
     WalletTransactionSerializer,
@@ -60,13 +61,43 @@ class _AdminWalletReviewView(APIView):
                 )
             tnx.status = self.new_status
             tnx.reviewed_at = timezone.now()
-            tnx.save(update_fields=['status', 'reviewed_at'])
+            tnx.reviewed_by = request.user
+            tnx.save(update_fields=['status', 'reviewed_at', 'reviewed_by'])
             if self.new_status == WalletTransaction.Status.APPROVED:
                 User.objects.filter(pk=tnx.user_id).update(
                     wallet_balance=F('wallet_balance') + tnx.amount,
                 )
         tnx = WalletTransaction.objects.select_related('user').get(pk=pk)
         return Response(WalletTransactionSerializer(tnx).data)
+
+
+class AdminWalletCreditView(APIView):
+    """POST /api/v1/admin/wallet/credit/<user_id> - add money to a user's
+    wallet directly. Body: `{ "amount": "20.00", "note": "..." (optional) }`.
+
+    Not a top-up request: there is nothing to approve, the balance moves at
+    once, and a `WalletTransaction` with `source: "admin"` and `status:
+    "approved"` is kept as the record of it."""
+
+    permission_classes = [permissions.IsAdminUser]
+
+    def post(self, request, user_id):
+        user = get_object_or_404(User, pk=user_id)
+        serializer = AdminWalletCreditSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        amount = serializer.validated_data['amount']
+        note = serializer.validated_data.get('note', '')
+
+        with transaction.atomic():
+            User.objects.filter(pk=user.pk).update(wallet_balance=F('wallet_balance') + amount)
+            credit = WalletTransaction.objects.create(
+                user=user, amount=amount, sender_number=note,
+                status=WalletTransaction.Status.APPROVED,
+                source=WalletTransaction.Source.ADMIN,
+                reviewed_at=timezone.now(), reviewed_by=request.user,
+            )
+        user.refresh_from_db()
+        return Response(WalletTransactionSerializer(credit).data, status=status.HTTP_201_CREATED)
 
 
 class AdminWalletApproveView(_AdminWalletReviewView):

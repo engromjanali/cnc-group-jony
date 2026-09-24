@@ -12,16 +12,29 @@ class WalletTransaction(models.Model):
         APPROVED = 'approved', 'Approved'
         DENIED = 'denied', 'Denied'
 
+    class Source(models.TextChoices):
+        # A user's own top-up request, reviewed by an admin.
+        USER = 'user', 'User request'
+        # An admin credited the wallet directly (no user request behind it).
+        ADMIN = 'admin', 'Admin credit'
+
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL, related_name='wallet_transactions', on_delete=models.CASCADE,
     )
     # The payment reference the user got from their bank/mobile wallet. Unique so
     # the same payment can't be credited twice.
-    transaction_id = models.CharField(max_length=64, unique=True)
+    # Blank for an admin credit, which has no real payment reference.
+    transaction_id = models.CharField(max_length=64, unique=True, blank=True, null=True)
     amount = models.DecimalField(max_digits=12, decimal_places=2)
     # The number the money was sent from, so an admin can match it to the payment.
     sender_number = models.CharField(max_length=32, blank=True, default='')
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDING)
+    source = models.CharField(max_length=10, choices=Source.choices, default=Source.USER)
+    # Who reviewed/credited it - the reviewing admin for a user request, the
+    # crediting admin for an admin credit. Kept as a record only.
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, related_name='+', on_delete=models.SET_NULL, null=True, blank=True,
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     reviewed_at = models.DateTimeField(null=True, blank=True)
 

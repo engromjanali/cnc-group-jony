@@ -269,6 +269,46 @@ class DesignListTests(DesignFixtures):
             self.assertEqual(response.status_code, 400, params)
             self.assertIn(name, response.data)
 
+    # --- the category picture shown beside the category name --------------------
+
+    def test_each_design_carries_its_categorys_picture(self):
+        self.beds.image_file = self._stored(StoredFile.Provider.CLOUDINARY, 'beds.png')
+        self.beds.save()
+        self._design('Royal Bed', self.beds)
+        self._design('Plain Door', self.doors)  # a category with no picture
+
+        by_title = {item['title']: item for item in self._list().data['results']}
+
+        self.assertTrue(by_title['Royal Bed']['category_image_url'])
+        self.assertIn('beds', by_title['Royal Bed']['category_image_url'])
+        self.assertIsNone(by_title['Plain Door']['category_image_url'])
+
+    def test_the_details_and_the_admin_list_carry_it_too(self):
+        self.beds.image_file = self._stored(StoredFile.Provider.CLOUDINARY, 'beds.png')
+        self.beds.save()
+        design = self._design('Royal Bed', self.beds)
+
+        details = self.client.get(reverse('design-details', args=[design.pk]))
+        self.assertTrue(details.data['category_image_url'])
+
+        self.client.force_authenticate(self.admin)
+        admin_list = self.client.get(reverse('admin-design-list'))
+        self.assertTrue(admin_list.data['results'][0]['category_image_url'])
+
+    def test_the_category_picture_costs_no_query_per_design(self):
+        self.beds.image_file = self._stored(StoredFile.Provider.CLOUDINARY, 'beds.png')
+        self.beds.save()
+        self._design('One', self.beds)
+
+        with CaptureQueriesContext(connection) as few:
+            self._list()
+        for n in range(6):
+            self._design(f'More {n}', self.beds)
+        with CaptureQueriesContext(connection) as many:
+            self._list()
+
+        self.assertEqual(len(many), len(few))
+
     def test_a_design_with_no_picture_still_lists(self):
         self._design('No picture', image=False)
 

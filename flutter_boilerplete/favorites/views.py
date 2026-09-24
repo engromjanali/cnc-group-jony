@@ -19,7 +19,7 @@ class FavoriteListView(generics.ListAPIView):
 
     def get_queryset(self):
         favorites = Favorite.objects.filter(user=self.request.user).select_related(
-            'design__category', 'design__sub_category',
+            'design__category', 'design__category__image_file', 'design__sub_category',
             'design__image_file', 'design__design_stored_file',
         )
         return [favorite.design for favorite in favorites]

@@ -297,6 +297,7 @@ class DesignDetailSerializer(serializers.ModelSerializer):
 
     category_id = serializers.IntegerField(source='category.id', read_only=True)
     category_label = serializers.CharField(source='category.label', read_only=True)
+    category_image_url = serializers.SerializerMethodField()
     sub_category_label = serializers.CharField(source='sub_category.label', read_only=True, default=None)
     image_url = serializers.SerializerMethodField()
     design_file_url = serializers.SerializerMethodField()
@@ -305,11 +306,18 @@ class DesignDetailSerializer(serializers.ModelSerializer):
     class Meta:
         model = Design
         fields = (
-            'id', 'title', 'category_id', 'category_label', 'sub_category_label',
+            'id', 'title', 'category_id', 'category_label', 'category_image_url',
+            'sub_category_label',
             'design_type', 'is_paid', 'amount',
             'image_url', 'description', 'design_file_url', 'design_file_name',
             'has_design_file', 'created_at',
         )
+
+    def get_category_image_url(self, obj):
+        """The category's picture, shown beside its name on a design card. Null
+        when the category has none."""
+        image = obj.category.image_file
+        return delivery_url(image.storage_key) if image is not None else None
 
     def get_image_url(self, obj):
         return design_image_url(obj, self.context.get('request'))

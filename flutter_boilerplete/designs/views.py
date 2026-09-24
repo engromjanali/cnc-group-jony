@@ -133,7 +133,9 @@ class AdminDesignListView(generics.ListAPIView):
     pagination_class = DesignPagination
 
     def get_queryset(self):
-        queryset = Design.objects.select_related('category', 'sub_category', 'image_file', 'design_stored_file').all()
+        queryset = Design.objects.select_related(
+            'category', 'category__image_file', 'sub_category', 'image_file', 'design_stored_file',
+        ).all()
 
         category_id = self.request.query_params.get('category')
         if category_id:
@@ -211,7 +213,7 @@ class DesignListView(generics.ListAPIView):
 
     def get_queryset(self):
         queryset = Design.objects.select_related(
-            'category', 'sub_category', 'image_file', 'design_stored_file',
+            'category', 'category__image_file', 'sub_category', 'image_file', 'design_stored_file',
         )
 
         category_id = self.request.query_params.get('category')
@@ -258,7 +260,9 @@ class DesignListView(generics.ListAPIView):
 class DesignDetailView(generics.RetrieveAPIView):
     """GET /api/v1/design/details/<id>"""
 
-    queryset = Design.objects.select_related('category', 'sub_category', 'image_file', 'design_stored_file').all()
+    queryset = Design.objects.select_related(
+        'category', 'category__image_file', 'sub_category', 'image_file', 'design_stored_file',
+    ).all()
     serializer_class = DesignDetailSerializer
     permission_classes = [permissions.IsAuthenticated]
 

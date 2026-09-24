@@ -1,18 +1,24 @@
+from django.db import transaction
 from django.db.models import Q
+from django.utils import timezone
 from rest_framework import generics, permissions, status
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.exceptions import TokenError
+from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken, OutstandingToken
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import User
+from . import password_reset
+from .models import PasswordResetCode, User
 from .serializers import (
     AdminUserSerializer,
+    ForgotPasswordSerializer,
     GoogleLoginSerializer,
     LoginSerializer,
     LogoutSerializer,
     RegisterSerializer,
+    ResetPasswordSerializer,
     SetPasswordSerializer,
     UserSerializer,
     token_pair,
@@ -97,6 +103,80 @@ class SetPasswordView(APIView):
         user.password_set = True
         user.save(update_fields=['password', 'password_set'])
         return Response({'message': 'Password set successfully.', 'password_set': True})
+
+
+FORGOT_PASSWORD_MESSAGE = 'If an account exists for that email, we have sent it a 6-digit code.'
+
+
+class ForgotPasswordView(APIView):
+    """POST /api/v1/auth/forgot-password - email a 6-digit reset code.
+
+    Body: `{ "email" }`. **Always `200` with the same message**, whether or not
+    an account exists, so it can't be used to find out who has one. Only an
+    existing, active account is emailed - and a Google sign-up that never set a
+    password counts. A code is not sent again within 60 seconds, or more than 5
+    times an hour, for the same account (still `200`). Send failures are logged,
+    not shown."""
+
+    permission_classes = [permissions.AllowAny]
+    authentication_classes = []
+    throttle_scope = 'password-reset'
+
+    def post(self, request):
+        serializer = ForgotPasswordSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        user = User.objects.filter(
+            email__iexact=serializer.validated_data['email'], is_active=True,
+        ).first()
+        if user is not None:
+            code = password_reset.issue_code(user)
+            if code is not None:
+                password_reset.send_code_email(user, code)
+        return Response({'message': FORGOT_PASSWORD_MESSAGE})
+
+
+class ResetPasswordView(APIView):
+    """POST /api/v1/auth/reset-password - set a new password with the emailed code.
+
+    Body: `{ "email", "code", "password", "password_confirmation" }`. `400` with
+    key `code` for any way the code is unusable (one message for all of them),
+    `password_confirmation` when the two differ, `password` when it fails the
+    password rules - in which case the code is *not* used up. On success the
+    password is set, `password_set` becomes true (so a Google sign-up can now
+    also sign in with email + password), the code is spent, and every session
+    the account had is signed out (its refresh tokens are blacklisted)."""
+
+    permission_classes = [permissions.AllowAny]
+    authentication_classes = []
+    throttle_scope = 'password-reset'
+
+    def post(self, request):
+        serializer = ResetPasswordSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = serializer.validated_data['user']
+
+        with transaction.atomic():
+            # Locked, so two requests with the same code can't both win.
+            code = PasswordResetCode.objects.select_for_update().get(
+                pk=serializer.validated_data['code_id'],
+            )
+            if code.used_at is not None:
+                return Response(
+                    {'code': ResetPasswordSerializer.INVALID_CODE},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            code.used_at = timezone.now()
+            code.save(update_fields=['used_at'])
+
+            user.set_password(serializer.validated_data['password'])
+            user.password_set = True
+            user.save(update_fields=['password', 'password_set'])
+
+            for token in OutstandingToken.objects.filter(user=user):
+                BlacklistedToken.objects.get_or_create(token=token)
+
+        return Response({'message': 'Password reset. You can now sign in.'})
 
 
 class LogoutView(APIView):

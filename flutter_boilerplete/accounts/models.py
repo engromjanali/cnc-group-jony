@@ -68,3 +68,26 @@ class User(AbstractUser):
 
     def __str__(self):
         return self.email
+
+
+class PasswordResetCode(models.Model):
+    """A code emailed to prove someone controls an account's email address.
+
+    Only a keyed hash of the code is stored (see `accounts.password_reset`), so
+    a leaked table cannot be replayed. A code is used once, expires, and dies
+    after too many wrong guesses; asking for a new one retires the old."""
+
+    user = models.ForeignKey(
+        User, related_name='password_reset_codes', on_delete=models.CASCADE,
+    )
+    code_hash = models.CharField(max_length=64)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    attempts = models.PositiveSmallIntegerField(default=0)
+    used_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ('-created_at', '-id')
+
+    def __str__(self):
+        return f'reset code for {self.user_id}'

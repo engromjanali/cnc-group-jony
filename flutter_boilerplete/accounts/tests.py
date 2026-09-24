@@ -401,3 +401,258 @@ class PasswordSetFlagTests(APITestCase):
             self.assertEqual(response.status_code, 200, path)
             refresh = response.data['refresh']
         self.assertEqual(user.pk, User.objects.get(email='r@example.com').pk)
+
+
+import re  # noqa: E402
+from datetime import timedelta  # noqa: E402
+
+from django.core import mail  # noqa: E402
+from django.core.cache import cache  # noqa: E402
+from django.utils import timezone  # noqa: E402
+from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken  # noqa: E402
+
+from . import password_reset  # noqa: E402
+from .models import PasswordResetCode  # noqa: E402
+
+FORGOT = '/api/v1/auth/forgot-password'
+RESET = '/api/v1/auth/reset-password'
+NEW_PASSWORD = 'Correct-Horse-Battery-9'
+
+
+class PasswordResetTests(APITestCase):
+    def setUp(self):
+        cache.clear()  # the per-IP throttle counts in the cache, across tests
+        self.jane = User.objects.create_user('jane@example.com', 'Old-Password-42')
+
+    def _forgot(self, email='jane@example.com'):
+        return self.client.post(FORGOT, {'email': email})
+
+    def _code(self, index=-1):
+        return re.search(r'\b(\d{6})\b', mail.outbox[index].body).group(1)
+
+    def _reset(self, code, password=NEW_PASSWORD, confirmation=None, email='jane@example.com'):
+        return self.client.post(RESET, {
+            'email': email, 'code': code, 'password': password,
+            'password_confirmation': confirmation if confirmation is not None else password,
+        })
+
+    def _age_codes(self, **fields):
+        PasswordResetCode.objects.update(**fields)
+
+    # --- asking for a code -------------------------------------------------------
+
+    def test_a_known_email_gets_one_email_with_a_six_digit_code(self):
+        response = self._forgot()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].to, ['jane@example.com'])
+        self.assertRegex(mail.outbox[0].body, r'\b\d{6}\b')
+        self.assertIn('10 minutes', mail.outbox[0].body)
+        self.assertTrue(mail.outbox[0].alternatives)  # the HTML version
+
+    def test_an_unknown_email_looks_exactly_the_same_and_sends_nothing(self):
+        known = self._forgot()
+        unknown = self._forgot('nobody@example.com')
+
+        self.assertEqual(unknown.status_code, known.status_code)
+        self.assertEqual(unknown.data, known.data)
+        self.assertEqual(len(mail.outbox), 1)  # only jane's
+
+    def test_email_matching_ignores_case(self):
+        self._forgot('JANE@Example.com')
+
+        self.assertEqual(len(mail.outbox), 1)
+
+    def test_a_disabled_account_gets_nothing(self):
+        self.jane.is_active = False
+        self.jane.save()
+
+        self.assertEqual(self._forgot().status_code, 200)
+        self.assertEqual(len(mail.outbox), 0)
+
+    def test_a_google_sign_up_with_no_password_can_ask_too(self):
+        google = User.objects.create_user('g@gmail.com', firebase_uid='uid-g')
+        self.assertFalse(google.password_set)
+
+        self._forgot('g@gmail.com')
+
+        self.assertEqual(len(mail.outbox), 1)
+
+    def test_a_second_request_within_a_minute_sends_nothing_more(self):
+        self._forgot()
+        again = self._forgot()
+
+        self.assertEqual(again.status_code, 200)
+        self.assertEqual(len(mail.outbox), 1)
+
+    def test_after_the_cooldown_a_new_code_retires_the_old_one(self):
+        self._forgot()
+        old = self._code()
+        self._age_codes(created_at=timezone.now() - timedelta(minutes=2))
+
+        self._forgot()
+        new = self._code()
+
+        self.assertEqual(len(mail.outbox), 2)
+        self.assertEqual(self._reset(old).status_code, 400)
+        self.assertEqual(self._reset(new).status_code, 200)
+
+    def test_no_more_than_five_an_hour(self):
+        for _ in range(7):
+            self._forgot()
+            self._age_codes(created_at=timezone.now() - timedelta(minutes=2))
+
+        self.assertEqual(len(mail.outbox), 5)
+
+    def test_only_a_hash_of_the_code_is_stored(self):
+        self._forgot()
+        code = self._code()
+        row = PasswordResetCode.objects.get()
+
+        self.assertNotIn(code, row.code_hash)
+        self.assertEqual(row.code_hash, password_reset.hash_code(code))
+
+    def test_a_mail_failure_does_not_show_and_does_not_break_the_request(self):
+        with patch('accounts.password_reset.send_mail', side_effect=OSError('smtp down')):
+            with self.assertLogs('accounts.password_reset', level='ERROR'):
+                response = self._forgot()
+
+        self.assertEqual(response.status_code, 200)
+
+    def test_a_stale_token_in_the_header_does_not_turn_it_into_a_401(self):
+        self.client.credentials(HTTP_AUTHORIZATION='Bearer not-a-real-token')
+
+        self.assertEqual(self._forgot().status_code, 200)
+
+    def test_an_invalid_email_is_a_400(self):
+        self.assertEqual(self.client.post(FORGOT, {'email': 'nope'}).status_code, 400)
+        self.assertEqual(self.client.post(FORGOT, {}).status_code, 400)
+
+    # --- using the code ----------------------------------------------------------
+
+    def test_the_code_sets_the_password_and_the_old_one_stops_working(self):
+        self._forgot()
+
+        response = self._reset(self._code())
+
+        self.assertEqual(response.status_code, 200)
+        login = lambda pw: self.client.post(  # noqa: E731
+            '/api/v1/auth/login', {'email': 'jane@example.com', 'password': pw},
+        ).status_code
+        self.assertEqual(login(NEW_PASSWORD), 200)
+        self.assertEqual(login('Old-Password-42'), 400)
+
+    def test_a_google_sign_up_can_set_its_first_password_this_way(self):
+        google = User.objects.create_user('g@gmail.com', firebase_uid='uid-g')
+        self._forgot('g@gmail.com')
+
+        response = self._reset(self._code(), email='g@gmail.com')
+
+        self.assertEqual(response.status_code, 200)
+        google.refresh_from_db()
+        self.assertTrue(google.password_set)
+        self.assertTrue(google.check_password(NEW_PASSWORD))
+        self.assertEqual(google.firebase_uid, 'uid-g')
+        login = self.client.post(
+            '/api/v1/auth/login', {'email': 'g@gmail.com', 'password': NEW_PASSWORD},
+        )
+        self.assertEqual(login.status_code, 200)
+
+    def test_a_code_works_once(self):
+        self._forgot()
+        code = self._code()
+
+        self.assertEqual(self._reset(code).status_code, 200)
+        self.assertEqual(self._reset(code, 'Another-Strong-Pass-7').status_code, 400)
+        self.jane.refresh_from_db()
+        self.assertTrue(self.jane.check_password(NEW_PASSWORD))
+
+    def test_a_wrong_code_is_refused_and_the_password_untouched(self):
+        self._forgot()
+        wrong = '000000' if self._code() != '000000' else '111111'
+
+        response = self._reset(wrong)
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('code', response.data)
+        self.jane.refresh_from_db()
+        self.assertTrue(self.jane.check_password('Old-Password-42'))
+
+    def test_five_wrong_guesses_kill_the_code_even_for_the_right_one(self):
+        self._forgot()
+        real = self._code()
+        wrong = '000000' if real != '000000' else '111111'
+
+        for _ in range(password_reset.MAX_ATTEMPTS):
+            self.assertEqual(self._reset(wrong).status_code, 400)
+
+        self.assertEqual(self._reset(real).status_code, 400)
+        self.jane.refresh_from_db()
+        self.assertTrue(self.jane.check_password('Old-Password-42'))
+
+    def test_an_expired_code_is_refused(self):
+        self._forgot()
+        self._age_codes(expires_at=timezone.now() - timedelta(seconds=1))
+
+        self.assertEqual(self._reset(self._code()).status_code, 400)
+
+    def test_every_way_of_being_wrong_gives_the_same_answer(self):
+        self._forgot()
+        real = self._code()
+        wrong_code = self._reset('000000' if real != '000000' else '111111')
+        no_such_account = self._reset(real, email='nobody@example.com')
+        no_code_at_all = self._reset(real, email='nobody-else@example.com')
+
+        self.assertEqual(wrong_code.data, no_such_account.data)
+        self.assertEqual(wrong_code.data, no_code_at_all.data)
+
+    def test_a_code_cannot_be_used_on_someone_elses_account(self):
+        User.objects.create_user('bob@example.com', 'Bobs-Password-42')
+        self._forgot()
+
+        response = self._reset(self._code(), email='bob@example.com')
+
+        self.assertEqual(response.status_code, 400)
+
+    def test_a_weak_password_is_refused_without_using_up_the_code(self):
+        self._forgot()
+        code = self._code()
+
+        for weak in ('short', '12345678', 'password'):
+            self.assertEqual(self._reset(code, weak).status_code, 400, weak)
+        self.assertEqual(self._reset(code, confirmation='Different-Pass-99').status_code, 400)
+
+        # None of that spent the code or counted as a wrong guess.
+        row = PasswordResetCode.objects.get()
+        self.assertIsNone(row.used_at)
+        self.assertEqual(row.attempts, 0)
+        self.assertEqual(self._reset(code).status_code, 200)
+
+    def test_a_password_like_the_email_is_refused(self):
+        self._forgot()
+
+        self.assertEqual(self._reset(self._code(), 'jane@example.com').status_code, 400)
+
+    def test_the_accounts_sessions_are_signed_out(self):
+        login = self.client.post(
+            '/api/v1/auth/login', {'email': 'jane@example.com', 'password': 'Old-Password-42'},
+        )
+        refresh = login.data['tokens']['refresh']
+        self._forgot()
+
+        self._reset(self._code())
+
+        self.assertTrue(BlacklistedToken.objects.exists())
+        renewed = self.client.post('/api/v1/auth/refresh', {'refresh': refresh})
+        self.assertEqual(renewed.status_code, 401)
+
+    def test_it_needs_all_the_fields(self):
+        for body in ({}, {'email': 'jane@example.com'}, {'email': 'jane@example.com', 'code': '123456'}):
+            self.assertEqual(self.client.post(RESET, body).status_code, 400)
+
+    def test_the_per_ip_throttle_eventually_says_slow_down(self):
+        codes = [self._forgot().status_code for _ in range(25)]
+
+        self.assertIn(429, codes)
+        self.assertEqual(codes[0], 200)

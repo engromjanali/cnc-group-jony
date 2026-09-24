@@ -164,6 +164,15 @@ REST_FRAMEWORK = {
     'DEFAULT_RENDERER_CLASSES': (
         'rest_framework.renderers.JSONRenderer',
     ),
+    # Only views that name a `throttle_scope` are limited (password reset).
+    # Per IP, and best effort: on Vercel each instance has its own cache. The
+    # limits stored in the database (accounts.password_reset) are the real ones.
+    'DEFAULT_THROTTLE_CLASSES': (
+        'rest_framework.throttling.ScopedRateThrottle',
+    ),
+    'DEFAULT_THROTTLE_RATES': {
+        'password-reset': '20/hour',
+    },
 }
 
 
@@ -263,8 +272,38 @@ FIREBASE_PROJECT_ID = os.environ.get('FIREBASE_PROJECT_ID', '')
 # Email
 # https://docs.djangoproject.com/en/6.1/topics/email/#topic-email-configuration
 
-MAILERS = {
-    'default': {
-        'BACKEND': 'django.core.mail.backends.console.EmailBackend',
-    },
-}
+# Sends the password reset code. Django 6.1 configures mail through MAILERS (the
+# old EMAIL_* settings must not be mixed with it). With no EMAIL_HOST_USER set -
+# local development - mail is printed to the server console, so the code can be
+# read from the terminal. For Gmail, EMAIL_HOST_PASSWORD must be an app password
+# (Google account -> Security -> 2-Step Verification -> App passwords), not the
+# account password.
+# (Named differently from Django's own deprecated EMAIL_HOST_USER setting, which
+# may not exist next to MAILERS - only the environment variable keeps that name.)
+SMTP_USER = os.environ.get('EMAIL_HOST_USER', '')
+SMTP_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', '')
+
+if SMTP_USER:
+    MAILERS = {
+        'default': {
+            'BACKEND': 'django.core.mail.backends.smtp.EmailBackend',
+            'OPTIONS': {
+                'host': os.environ.get('EMAIL_HOST', 'smtp.gmail.com'),
+                'port': int(os.environ.get('EMAIL_PORT', '587')),
+                'username': SMTP_USER,
+                'password': SMTP_PASSWORD,
+                'use_tls': os.environ.get('EMAIL_USE_TLS', 'True') == 'True',
+                # A slow mail server must not hold the request open until the
+                # platform kills it.
+                'timeout': 10,
+            },
+        },
+    }
+else:
+    MAILERS = {
+        'default': {
+            'BACKEND': 'django.core.mail.backends.console.EmailBackend',
+        },
+    }
+
+DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL') or SMTP_USER or 'no-reply@localhost'

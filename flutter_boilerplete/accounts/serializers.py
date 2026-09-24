@@ -9,7 +9,7 @@ from storage.services import delivery_url
 from storage.uploads import discard, store_upload
 from storage.validators import validate_image_upload
 
-from . import firebase
+from . import firebase, password_reset
 from .models import User
 
 
@@ -225,6 +225,45 @@ class SetPasswordSerializer(serializers.Serializer):
         # Also refuses one too close to the email/name, which is why it needs
         # the user.
         validate_password(attrs['password'], user=user)
+        return attrs
+
+
+class ForgotPasswordSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
+
+class ResetPasswordSerializer(serializers.Serializer):
+    """Set a new password using the code that was emailed.
+
+    Works for any active account - including a Google sign-up that has never had
+    a password. Every way the code can be wrong (no such account, no code,
+    expired, used, wrong, too many tries) is the same `400`, so nothing here
+    tells a stranger which emails have accounts."""
+
+    email = serializers.EmailField()
+    code = serializers.CharField(max_length=32)
+    password = serializers.CharField(write_only=True)
+    password_confirmation = serializers.CharField(write_only=True)
+
+    INVALID_CODE = 'Invalid or expired code.'
+
+    def validate(self, attrs):
+        user = User.objects.filter(email__iexact=attrs['email'], is_active=True).first()
+        live = password_reset.find_valid_code(user, attrs['code']) if user else None
+        if live is None:
+            raise serializers.ValidationError({'code': self.INVALID_CODE})
+
+        # Checked after the code (so a wrong code learns nothing about the
+        # password rules) but before it is used up: a weak password lets the
+        # user try again with the same code.
+        if attrs['password'] != attrs['password_confirmation']:
+            raise serializers.ValidationError(
+                {'password_confirmation': 'Passwords do not match.'},
+            )
+        validate_password(attrs['password'], user=user)
+
+        attrs['user'] = user
+        attrs['code_id'] = live.pk
         return attrs
 
 

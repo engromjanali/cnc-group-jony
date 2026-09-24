@@ -254,6 +254,11 @@ R2_BUCKET = os.environ.get('R2_BUCKET', '')
 # JWT authentication.
 CRON_SECRET = os.environ.get('CRON_SECRET', '')
 
+# Google sign-in: the app signs in with Firebase Auth (Google provider) and sends
+# the Firebase ID token to /auth/google, which is only accepted when it was
+# issued for this Firebase project.
+FIREBASE_PROJECT_ID = os.environ.get('FIREBASE_PROJECT_ID', '')
+
 
 # Email
 # https://docs.djangoproject.com/en/6.1/topics/email/#topic-email-configuration

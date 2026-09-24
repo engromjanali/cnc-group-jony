@@ -9,6 +9,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from .models import User
 from .serializers import (
     AdminUserSerializer,
+    GoogleLoginSerializer,
     LoginSerializer,
     LogoutSerializer,
     RegisterSerializer,
@@ -42,6 +43,30 @@ class LoginView(APIView):
         serializer.is_valid(raise_exception=True)
         user = serializer.validated_data['user']
         return Response({'user': UserSerializer(user).data, 'tokens': token_pair(user)})
+
+
+class GoogleLoginView(APIView):
+    """POST /api/v1/auth/google - sign in or sign up with Google.
+
+    Body: `{ "id_token": "<Firebase ID token>" }`. Answers like login, plus
+    `is_new_user`. `400` (`id_token`) when the token is invalid, expired,
+    for another project, or has no verified Google email."""
+
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        serializer = GoogleLoginSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = serializer.validated_data['user']
+        created = serializer.validated_data['created']
+        return Response(
+            {
+                'user': UserSerializer(user).data,
+                'tokens': token_pair(user),
+                'is_new_user': created,
+            },
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
 
 
 class LogoutView(APIView):

@@ -8,6 +8,7 @@ from storage.services import delivery_url
 from storage.uploads import discard, store_upload
 from storage.validators import validate_image_upload
 
+from . import google
 from .models import User
 
 
@@ -124,6 +125,37 @@ class LoginSerializer(serializers.Serializer):
         if not user.is_active:
             raise serializers.ValidationError('This account has been disabled.')
         attrs['user'] = user
+        return attrs
+
+
+class GoogleLoginSerializer(serializers.Serializer):
+    """Sign in (or sign up) with a Google account.
+
+    `id_token` is the Firebase ID token from a Google sign-in. An existing
+    account with that email signs in; otherwise one is created, with no
+    password - it can only be entered through Google."""
+
+    id_token = serializers.CharField(write_only=True)
+
+    def validate(self, attrs):
+        try:
+            claims = google.verify_google_id_token(attrs['id_token'])
+        except google.InvalidGoogleToken as error:
+            raise serializers.ValidationError({'id_token': str(error)})
+
+        email = User.objects.normalize_email(claims['email'])
+        user = User.objects.filter(email__iexact=email).first()
+        created = user is None
+        if created:
+            first, _, last = (claims.get('name') or '').strip().partition(' ')
+            user = User(email=email, first_name=first[:150], last_name=last.strip()[:150])
+            user.set_unusable_password()
+            user.save()
+        elif not user.is_active:
+            raise serializers.ValidationError('This account has been disabled.')
+
+        attrs['user'] = user
+        attrs['created'] = created
         return attrs
 
 

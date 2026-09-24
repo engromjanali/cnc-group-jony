@@ -14,3 +14,5 @@ django-cors-headers==4.9.0
 Pillow==12.3.0
 
 
+google-auth==2.58.0
+cryptography==50.0.1

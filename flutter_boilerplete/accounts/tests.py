@@ -120,3 +120,117 @@ class AdminUserManagementTests(APITestCase):
         self.assertEqual(response.status_code, 400)
         self.admin.refresh_from_db()
         self.assertTrue(self.admin.is_active)
+
+
+from unittest.mock import patch  # noqa: E402
+
+from django.test import override_settings  # noqa: E402
+
+from . import google  # noqa: E402
+
+
+def _claims(**overrides):
+    claims = {
+        'email': 'new.person@gmail.com',
+        'email_verified': True,
+        'name': 'New Person',
+        'firebase': {'sign_in_provider': 'google.com'},
+    }
+    claims.update(overrides)
+    return claims
+
+
+class GoogleLoginTests(APITestCase):
+    URL = '/api/v1/auth/google'
+
+    def _login(self, token='a-firebase-id-token'):
+        return self.client.post(self.URL, {'id_token': token})
+
+    def test_a_new_google_user_is_created_and_signed_in(self):
+        with patch('accounts.google.verify_google_id_token', return_value=_claims()):
+            response = self._login()
+
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(response.data['is_new_user'])
+        self.assertIn('access', response.data['tokens'])
+        self.assertIn('refresh', response.data['tokens'])
+        user = User.objects.get(email='new.person@gmail.com')
+        self.assertEqual((user.first_name, user.last_name), ('New', 'Person'))
+        self.assertFalse(user.has_usable_password())
+        self.assertFalse(user.is_staff)
+
+    def test_an_existing_user_signs_in_without_a_duplicate(self):
+        existing = User.objects.create_user('New.Person@gmail.com', 'pw-1', first_name='Kept')
+        with patch('accounts.google.verify_google_id_token', return_value=_claims()):
+            response = self._login()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.data['is_new_user'])
+        self.assertEqual(response.data['user']['id'], existing.pk)
+        self.assertEqual(User.objects.count(), 1)
+        existing.refresh_from_db()
+        self.assertEqual(existing.first_name, 'Kept')
+        self.assertTrue(existing.has_usable_password())
+
+    def test_the_issued_token_works(self):
+        with patch('accounts.google.verify_google_id_token', return_value=_claims()):
+            access = self._login().data['tokens']['access']
+
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
+        profile = self.client.get('/api/v1/user/profile')
+        self.assertEqual(profile.status_code, 200)
+        self.assertEqual(profile.data['email'], 'new.person@gmail.com')
+
+    def test_a_disabled_account_is_refused(self):
+        User.objects.create_user('new.person@gmail.com', 'pw-1', is_active=False)
+        with patch('accounts.google.verify_google_id_token', return_value=_claims()):
+            response = self._login()
+
+        self.assertEqual(response.status_code, 400)
+
+    def test_an_invalid_token_is_a_400_and_creates_nothing(self):
+        with patch(
+            'accounts.google.verify_google_id_token',
+            side_effect=google.InvalidGoogleToken('Invalid or expired Google sign-in.'),
+        ):
+            response = self._login()
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('id_token', response.data)
+        self.assertEqual(User.objects.count(), 0)
+
+    def test_the_token_is_required(self):
+        self.assertEqual(self.client.post(self.URL, {}).status_code, 400)
+
+
+@override_settings(FIREBASE_PROJECT_ID='cncgroupjony')
+class VerifyGoogleTokenTests(APITestCase):
+    """The verifier itself, with google-auth's signature check stubbed out."""
+
+    def _verify(self, claims=None, error=None):
+        target = 'accounts.google.id_token.verify_firebase_token'
+        with patch(target, return_value=claims, side_effect=error) as verify:
+            return google.verify_google_id_token('tok'), verify
+
+    def test_it_checks_the_token_against_this_firebase_project(self):
+        _, verify = self._verify(_claims())
+
+        self.assertEqual(verify.call_args.kwargs['audience'], 'cncgroupjony')
+
+    def test_a_bad_signature_or_expired_token_is_rejected(self):
+        with self.assertRaises(google.InvalidGoogleToken):
+            self._verify(error=ValueError('Token expired'))
+        with self.assertRaises(google.InvalidGoogleToken):
+            self._verify(claims=None)
+
+    def test_only_a_google_sign_in_is_accepted(self):
+        with self.assertRaises(google.InvalidGoogleToken):
+            self._verify(_claims(firebase={'sign_in_provider': 'password'}))
+        with self.assertRaises(google.InvalidGoogleToken):
+            self._verify(_claims(firebase={}))
+
+    def test_an_unverified_or_missing_email_is_rejected(self):
+        with self.assertRaises(google.InvalidGoogleToken):
+            self._verify(_claims(email_verified=False))
+        with self.assertRaises(google.InvalidGoogleToken):
+            self._verify(_claims(email=''))

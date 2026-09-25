@@ -36,19 +36,27 @@ class UserSerializer(serializers.ModelSerializer):
 
     avatar = serializers.ImageField(write_only=True, required=False)
     avatar_url = serializers.SerializerMethodField()
+    role = serializers.SerializerMethodField()
 
     class Meta:
         model = User
         fields = (
             'id', 'email', 'first_name', 'last_name', 'phone',
             'avatar', 'avatar_url', 'wallet_balance', 'password_set', 'date_joined', 'updated_at',
+            'role', 'is_staff', 'is_superuser',
         )
         read_only_fields = (
             'id', 'email', 'wallet_balance', 'password_set', 'date_joined', 'updated_at',
+            'role', 'is_staff', 'is_superuser',
         )
 
     def get_avatar_url(self, obj):
         return delivery_url(obj.avatar_file.storage_key) if obj.avatar_file_id else None
+
+    def get_role(self, obj):
+        if obj.is_superuser or obj.is_staff:
+            return 'admin'
+        return 'customer'
 
     def validate_avatar(self, avatar):
         return validate_image_upload(avatar)
@@ -84,17 +92,27 @@ class AdminUserSerializer(serializers.ModelSerializer):
     the admin credit endpoint, both of which keep their own record of why."""
 
     avatar_url = serializers.SerializerMethodField()
+    role = serializers.SerializerMethodField()
 
     class Meta:
         model = User
         fields = (
             'id', 'email', 'first_name', 'last_name', 'phone', 'avatar_url',
-            'wallet_balance', 'is_active', 'date_joined', 'updated_at',
+            'wallet_balance', 'is_active', 'role', 'is_staff', 'is_superuser',
+            'date_joined', 'updated_at',
         )
-        read_only_fields = ('id', 'email', 'wallet_balance', 'date_joined', 'updated_at')
+        read_only_fields = (
+            'id', 'email', 'wallet_balance', 'role', 'is_staff', 'is_superuser',
+            'date_joined', 'updated_at',
+        )
 
     def get_avatar_url(self, obj):
         return delivery_url(obj.avatar_file.storage_key) if obj.avatar_file_id else None
+
+    def get_role(self, obj):
+        if obj.is_superuser or obj.is_staff:
+            return 'admin'
+        return 'customer'
 
     def validate_is_active(self, value):
         request = self.context.get('request')

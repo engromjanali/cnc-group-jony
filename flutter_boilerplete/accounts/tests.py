@@ -242,6 +242,26 @@ class GoogleLoginTests(APITestCase):
         self.assertEqual(profile.status_code, 200)
         self.assertEqual(profile.data['email'], 'new.person@gmail.com')
         self.assertFalse(profile.data['password_set'])
+        self.assertEqual(profile.data['role'], 'customer')
+        self.assertFalse(profile.data['is_staff'])
+
+    def test_admin_profile_has_admin_role_and_cannot_be_escalated(self):
+        admin = User.objects.create_user('staff.admin@example.com', 'admin-pw', is_staff=True)
+        self.client.force_authenticate(admin)
+        profile = self.client.get('/api/v1/user/profile')
+        self.assertEqual(profile.status_code, 200)
+        self.assertEqual(profile.data['role'], 'admin')
+        self.assertTrue(profile.data['is_staff'])
+
+        # Customer tries to escalate role via profile update
+        customer = User.objects.create_user('regular@example.com', 'cust-pw')
+        self.client.force_authenticate(customer)
+        patch_res = self.client.patch('/api/v1/user/profile', {'role': 'admin', 'is_staff': True})
+        self.assertEqual(patch_res.status_code, 200)
+        self.assertEqual(patch_res.data['role'], 'customer')
+        self.assertFalse(patch_res.data['is_staff'])
+        customer.refresh_from_db()
+        self.assertFalse(customer.is_staff)
 
 
 def _fake_service_account(project='cncgroupjony'):

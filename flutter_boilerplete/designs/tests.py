@@ -1,4 +1,6 @@
 import itertools
+from decimal import Decimal
+from unittest.mock import patch
 from io import StringIO
 
 from django.contrib.auth import get_user_model
@@ -13,7 +15,7 @@ from rest_framework.test import APITestCase
 from storage.models import StoredFile
 
 from .management.commands.seed_dummy_catalog import CATALOGUE, MARKER
-from .models import Category, Design, SubCategory
+from .models import Category, Design, DesignPurchase, SubCategory
 
 User = get_user_model()
 
@@ -653,3 +655,286 @@ class SeedDummyCatalogTests(DesignFixtures):
         self.assertTrue(designs[0]['image_url'].startswith(MARKER))
         self.assertFalse(designs[0]['has_design_file'])
         self.assertEqual(len(listed.data['results']), 20)
+
+
+class DesignDownloadChargeTests(DesignFixtures):
+    """Downloading a design: free ones cost nothing, paid ones take their price
+    from the wallet once, and the file is never handed over unpaid."""
+
+    FILE = 'https://files.example/panel.dxf'
+
+    def _paid(self, title='Royal Bed', amount='50.00', with_file=True):
+        return Design.objects.create(
+            category=self.beds, title=title, is_paid=True, amount=Decimal(amount),
+            design_file_url=self.FILE if with_file else '',
+            design_file_name='panel.dxf' if with_file else '',
+        )
+
+    def _free(self, title='Free Panel'):
+        return Design.objects.create(
+            category=self.beds, title=title, design_file_url=self.FILE, design_file_name='panel.dxf',
+        )
+
+    def _fund(self, amount, user=None):
+        user = user or self.customer
+        user.wallet_balance = Decimal(amount)
+        user.save(update_fields=['wallet_balance'])
+
+    def _balance(self, user=None):
+        return (user or self.customer).__class__.objects.get(pk=(user or self.customer).pk).wallet_balance
+
+    def _download(self, design):
+        return self.client.post(reverse('design-download', args=[design.pk]))
+
+    # --- paying -------------------------------------------------------------------
+
+    def test_a_paid_design_takes_its_price_from_the_wallet_and_hands_over_the_file(self):
+        self._fund('120.00')
+        design = self._paid(amount='50.00')
+
+        response = self._download(design)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data['charged'], '50.00')
+        self.assertEqual(response.data['walletBalance'], '70.00')
+        self.assertFalse(response.data['alreadyPurchased'])
+        self.assertEqual(response.data['designId'], design.pk)
+        self.assertEqual(response.data['downloadUrl'], self.FILE)
+        self.assertEqual(response.data['fileName'], 'panel.dxf')
+        self.assertEqual(self._balance(), Decimal('70.00'))
+
+    def test_the_purchase_is_recorded_with_the_price_and_title_at_the_time(self):
+        self._fund('100.00')
+        design = self._paid(title='Royal Bed', amount='19.99')
+
+        self._download(design)
+
+        purchase = DesignPurchase.objects.get()
+        self.assertEqual((purchase.user, purchase.design), (self.customer, design))
+        self.assertEqual((purchase.design_title, purchase.amount), ('Royal Bed', Decimal('19.99')))
+
+    def test_cents_are_exact(self):
+        self._fund('20.00')
+
+        response = self._download(self._paid(amount='19.99'))
+
+        self.assertEqual(response.data['walletBalance'], '0.01')
+        self.assertEqual(self._balance(), Decimal('0.01'))
+
+    def test_a_balance_exactly_equal_to_the_price_is_enough(self):
+        self._fund('50.00')
+
+        response = self._download(self._paid(amount='50.00'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self._balance(), Decimal('0.00'))
+
+    # --- once only ----------------------------------------------------------------
+
+    def test_downloading_again_is_free(self):
+        self._fund('120.00')
+        design = self._paid(amount='50.00')
+
+        self._download(design)
+        again = self._download(design)
+
+        self.assertEqual(again.status_code, 200)
+        self.assertEqual(again.data['charged'], '0.00')
+        self.assertTrue(again.data['alreadyPurchased'])
+        self.assertEqual(again.data['walletBalance'], '70.00')
+        self.assertEqual(DesignPurchase.objects.count(), 1)
+        self.assertEqual(self._balance(), Decimal('70.00'))
+
+    def test_a_price_change_neither_recharges_nor_locks_out_the_owner(self):
+        self._fund('100.00')
+        design = self._paid(amount='50.00')
+        self._download(design)
+
+        Design.objects.filter(pk=design.pk).update(amount=Decimal('80.00'))
+        again = self._download(design)
+
+        self.assertEqual(again.data['charged'], '0.00')
+        self.assertEqual(self._balance(), Decimal('50.00'))
+
+    def test_each_user_pays_for_themselves(self):
+        self._fund('100.00')
+        self._fund('100.00', self.admin)
+        design = self._paid(amount='30.00')
+
+        self._download(design)
+        self.client.force_authenticate(self.admin)
+        second = self._download(design)
+
+        self.assertEqual(second.data['charged'], '30.00')
+        self.assertEqual(DesignPurchase.objects.count(), 2)
+        self.assertEqual(self._balance(), Decimal('70.00'))
+        self.assertEqual(self._balance(self.admin), Decimal('70.00'))
+
+    def test_a_purchase_survives_the_design_being_deleted(self):
+        self._fund('100.00')
+        design = self._paid(title='Royal Bed', amount='50.00')
+        self._download(design)
+
+        design.delete()
+
+        purchase = DesignPurchase.objects.get()
+        self.assertIsNone(purchase.design)
+        self.assertEqual((purchase.design_title, purchase.amount), ('Royal Bed', Decimal('50.00')))
+
+    # --- not enough money ---------------------------------------------------------
+
+    def test_too_little_in_the_wallet_is_a_402_and_takes_nothing(self):
+        self._fund('20.00')
+        design = self._paid(amount='50.00')
+
+        response = self._download(design)
+
+        self.assertEqual(response.status_code, 402)
+        self.assertEqual(response.data['required'], '50.00')
+        self.assertEqual(response.data['walletBalance'], '20.00')
+        self.assertIn('balance', response.data['detail'])
+        self.assertNotIn('downloadUrl', response.data)
+        self.assertEqual(self._balance(), Decimal('20.00'))
+        self.assertEqual(DesignPurchase.objects.count(), 0)
+
+    def test_two_designs_that_together_cost_more_than_the_wallet_cannot_both_be_bought(self):
+        self._fund('60.00')
+        first = self._paid('First', '50.00')
+        second = self._paid('Second', '50.00')
+
+        self.assertEqual(self._download(first).status_code, 200)
+        refused = self._download(second)
+
+        self.assertEqual(refused.status_code, 402)
+        self.assertEqual(refused.data['walletBalance'], '10.00')
+        self.assertEqual(self._balance(), Decimal('10.00'))  # never negative
+        self.assertEqual(DesignPurchase.objects.count(), 1)
+        self.assertFalse(DesignPurchase.objects.filter(design=second).exists())
+
+    def test_after_adding_money_the_same_call_then_works(self):
+        design = self._paid(amount='50.00')
+        self.assertEqual(self._download(design).status_code, 402)
+
+        self._fund('60.00')
+        response = self._download(design)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self._balance(), Decimal('10.00'))
+
+    # --- free designs and missing files -------------------------------------------
+
+    def test_a_free_design_costs_nothing_and_leaves_no_purchase(self):
+        self._fund('5.00')
+
+        response = self._download(self._free())
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['charged'], '0.00')
+        self.assertEqual(response.data['walletBalance'], '5.00')
+        self.assertEqual(response.data['downloadUrl'], self.FILE)
+        self.assertEqual(DesignPurchase.objects.count(), 0)
+
+    def test_a_free_design_works_with_an_empty_wallet(self):
+        self.assertEqual(self._download(self._free()).status_code, 200)
+
+    def test_nothing_is_charged_for_a_design_with_no_file(self):
+        self._fund('100.00')
+        design = self._paid(with_file=False)
+
+        response = self._download(design)
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(self._balance(), Decimal('100.00'))
+        self.assertEqual(DesignPurchase.objects.count(), 0)
+
+    def test_a_paid_design_stored_privately_is_charged_and_signed(self):
+        self._fund('100.00')
+        design = self._paid(with_file=False)
+        design.design_stored_file = self._stored(StoredFile.Provider.R2, 'panel.dxf')
+        design.save()
+
+        class _Signer:
+            def url_for(self, key, download_name=None):
+                return f'https://r2.example/{key}?sig=1&name={download_name}'
+
+        with patch('designs.views.get_storage_service', return_value=_Signer()):
+            response = self._download(design)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data['downloadUrl'].startswith('https://r2.example/'))
+        self.assertEqual(response.data['charged'], '50.00')
+
+    # --- access -------------------------------------------------------------------
+
+    def test_it_needs_a_login(self):
+        self.client.force_authenticate(None)
+
+        self.assertEqual(self._download(self._free()).status_code, 401)
+
+    def test_an_unknown_design_is_a_404(self):
+        self.assertEqual(self.client.post(reverse('design-download', args=[9999])).status_code, 404)
+
+    def test_only_post_charges(self):
+        self._fund('100.00')
+        design = self._paid()
+
+        self.assertEqual(self.client.get(reverse('design-download', args=[design.pk])).status_code, 405)
+        self.assertEqual(self._balance(), Decimal('100.00'))
+
+    # --- the old link cannot be used to skip paying --------------------------------
+
+    def test_the_download_url_refuses_an_unpaid_paid_design(self):
+        self._fund('100.00')
+        design = self._paid()
+
+        response = self.client.get(reverse('design-download-url', args=[design.pk]))
+
+        self.assertEqual(response.status_code, 402)
+        self.assertNotIn('downloadUrl', response.data)
+        self.assertEqual(self._balance(), Decimal('100.00'))  # asking never charges
+
+    def test_the_download_url_works_once_the_design_is_bought(self):
+        self._fund('100.00')
+        design = self._paid()
+        self._download(design)
+
+        response = self.client.get(reverse('design-download-url', args=[design.pk]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['downloadUrl'], self.FILE)
+
+    def test_the_download_url_for_a_free_design_is_unchanged(self):
+        response = self.client.get(reverse('design-download-url', args=[self._free().pk]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['downloadUrl'], self.FILE)
+
+    def test_a_paid_designs_permanent_file_link_is_never_in_a_payload(self):
+        """Otherwise the link could be fetched directly, skipping the charge."""
+        paid = self._paid()
+        free = self._free()
+
+        details = self.client.get(reverse('design-details', args=[paid.pk])).data
+        listing = {d['title']: d for d in self.client.get(reverse('design-list')).data['results']}
+
+        self.assertIsNone(details['design_file_url'])
+        self.assertIsNone(listing[paid.title]['design_file_url'])
+        self.assertTrue(listing[paid.title]['has_design_file'])  # it can be bought
+        self.assertEqual(listing[free.title]['design_file_url'], self.FILE)  # free: as before
+
+    def test_the_link_is_still_delivered_by_the_charged_call(self):
+        self._fund('100.00')
+        paid = self._paid()
+
+        self.assertEqual(self._download(paid).data['downloadUrl'], self.FILE)
+
+    def test_someone_elses_purchase_does_not_unlock_it_for_you(self):
+        self._fund('100.00', self.admin)
+        design = self._paid()
+        self.client.force_authenticate(self.admin)
+        self._download(design)
+
+        self.client.force_authenticate(self.customer)
+        response = self.client.get(reverse('design-download-url', args=[design.pk]))
+
+        self.assertEqual(response.status_code, 402)

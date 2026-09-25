@@ -7,6 +7,7 @@ from storage.uploads import discard, store_upload
 from storage.validators import file_extension, sanitize_file_name, validate_image_upload
 
 from .models import Category, Design, SubCategory
+from .purchases import price_of
 
 
 def design_image_url(design, request):
@@ -323,6 +324,11 @@ class DesignDetailSerializer(serializers.ModelSerializer):
         return design_image_url(obj, self.context.get('request'))
 
     def get_design_file_url(self, obj):
+        # A paid design's file is only handed out by the charged download call
+        # (POST /design/<id>/download). Putting its permanent link in every
+        # payload would let anyone fetch it without paying.
+        if price_of(obj) > 0:
+            return None
         return legacy_design_file_url(obj, self.context.get('request'))
 
     def get_has_design_file(self, obj):

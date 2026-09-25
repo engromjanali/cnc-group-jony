@@ -13,6 +13,7 @@ from storage.services import get_storage_service
 from storage.uploads import discard
 from storage.views import StorageErrorsMixin, StorageView
 
+from . import purchases
 from .models import Category, Design, SubCategory
 from .serializers import (
     CategorySerializer,
@@ -267,34 +268,91 @@ class DesignDetailView(generics.RetrieveAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
 
+def _download_payload(design, request):
+    """The signed link to a design's cutting file, or a 404 when it has none."""
+    stored = design.design_stored_file
+
+    if stored is not None and stored.status == StoredFile.Status.READY:
+        download_name = design.design_file_name or stored.original_name
+        url = get_storage_service(stored.provider).url_for(
+            stored.storage_key, download_name=download_name,
+        )
+        return {
+            'downloadUrl': url,
+            'fileName': download_name,
+            'expiresIn': storage_config.DOWNLOAD_URL_TTL_SECONDS,
+        }
+
+    legacy_url = legacy_design_file_url(design, request)
+    if legacy_url is None:
+        raise Http404('This design has no downloadable file.')
+    return {
+        'downloadUrl': legacy_url,
+        'fileName': design.design_file_name,
+        'expiresIn': None,
+    }
+
+
+def _payment_required(price, balance):
+    return Response(
+        {
+            'detail': 'Not enough balance in your wallet. Add money and try again.',
+            'required': str(price),
+            'walletBalance': str(balance),
+        },
+        status=status.HTTP_402_PAYMENT_REQUIRED,
+    )
+
+
 class DesignDownloadUrlView(StorageView):
     """GET /api/v1/design/<id>/download-url
 
-    Any logged-in user may download a published design, so there is no owner
-    check. Every call signs a new short-lived URL; clients must not keep it."""
+    A free design, or a paid one this user already bought, may be downloaded by
+    any logged-in user. A paid design they have **not** bought answers `402`:
+    buy it first with `POST /design/<id>/download`, which is the call that takes
+    the money. Every call signs a new short-lived URL; clients must not keep it."""
 
     def get(self, request, pk):
         design = get_object_or_404(
             Design.objects.select_related('design_stored_file'), pk=pk,
         )
-        stored = design.design_stored_file
+        if not purchases.is_owned(request.user, design):
+            return _payment_required(purchases.price_of(design), request.user.wallet_balance)
+        return Response(_download_payload(design, request))
 
-        if stored is not None and stored.status == StoredFile.Status.READY:
-            download_name = design.design_file_name or stored.original_name
-            url = get_storage_service(stored.provider).url_for(
-                stored.storage_key, download_name=download_name,
-            )
-            return Response({
-                'downloadUrl': url,
-                'fileName': download_name,
-                'expiresIn': storage_config.DOWNLOAD_URL_TTL_SECONDS,
-            })
 
-        legacy_url = legacy_design_file_url(design, request)
-        if legacy_url is None:
-            raise Http404('This design has no downloadable file.')
+class DesignDownloadView(StorageView):
+    """POST /api/v1/design/<id>/download - download a design, paying for it.
+
+    Call this when the user taps download. A **free** design is not charged. A
+    **paid** one takes its price from the wallet - **once**: downloading it again
+    later, from any device, is free, and a retry or double tap can never charge
+    twice. If the wallet holds less than the price it answers `402` with
+    `required` and `walletBalance`, and nothing is taken.
+
+    A design with no downloadable file is a `404` *before* anything is charged.
+
+    `200` with the signed link (same `downloadUrl` / `fileName` / `expiresIn` as
+    `GET /design/<id>/download-url`) plus `designId`, `charged` (what was taken
+    now), `alreadyPurchased` and `walletBalance` (after the charge)."""
+
+    def post(self, request, pk):
+        design = get_object_or_404(
+            Design.objects.select_related('design_stored_file'), pk=pk,
+        )
+        # Nothing is charged for a file that cannot be downloaded.
+        payload = _download_payload(design, request)
+
+        try:
+            charged, already_purchased = purchases.charge_for_design(request.user, design)
+        except purchases.InsufficientBalance as error:
+            return _payment_required(error.required, error.balance)
+
+        request.user.refresh_from_db(fields=['wallet_balance'])
         return Response({
-            'downloadUrl': legacy_url,
-            'fileName': design.design_file_name,
-            'expiresIn': None,
+            'designId': design.pk,
+            'charged': str(charged),
+            'alreadyPurchased': already_purchased,
+            'walletBalance': str(request.user.wallet_balance),
+            **payload,
         })

@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Category, Design, SubCategory
+from .models import Category, Design, DesignPurchase, SubCategory
 
 
 @admin.register(Category)
@@ -21,3 +21,11 @@ class DesignAdmin(admin.ModelAdmin):
     list_display = ('id', 'title', 'category', 'sub_category', 'design_type', 'is_paid', 'amount', 'created_at')
     list_filter = ('category', 'sub_category', 'design_type', 'is_paid')
     search_fields = ('title',)
+
+
+@admin.register(DesignPurchase)
+class DesignPurchaseAdmin(admin.ModelAdmin):
+    list_display = ('user', 'design_title', 'amount', 'created_at')
+    search_fields = ('user__email', 'design_title')
+    # A ledger: what was charged is not edited after the fact.
+    readonly_fields = ('user', 'design', 'design_title', 'amount', 'created_at')

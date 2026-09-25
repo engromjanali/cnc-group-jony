@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.db import models
 
 from storage.models import StoredFile
@@ -76,3 +77,31 @@ class Design(models.Model):
 
     def __str__(self):
         return self.title
+
+
+class DesignPurchase(models.Model):
+    """A paid design a user has bought with their wallet - the record that they
+    may download it, and the ledger of what they were charged.
+
+    One per (user, design): buying again is free. The price is copied here, so a
+    later price change neither re-charges the owner nor rewrites history, and the
+    design's title too, so the record survives the design being deleted."""
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, related_name='design_purchases', on_delete=models.CASCADE,
+    )
+    design = models.ForeignKey(
+        Design, related_name='purchases', on_delete=models.SET_NULL, null=True, blank=True,
+    )
+    design_title = models.CharField(max_length=255)
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ('-created_at', '-id')
+        constraints = [
+            models.UniqueConstraint(fields=('user', 'design'), name='one_purchase_per_design'),
+        ]
+
+    def __str__(self):
+        return f'{self.user_id} bought {self.design_title} for {self.amount}'

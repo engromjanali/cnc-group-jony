@@ -12,6 +12,7 @@ from .views import (
     CategoryListView,
     DesignDetailView,
     DesignDownloadUrlView,
+    DesignDownloadView,
     DesignListView,
     SubCategoryListView,
 )
@@ -42,4 +43,5 @@ urlpatterns = [
         DesignDownloadUrlView.as_view(),
         name='design-download-url',
     ),
+    path('design/<int:pk>/download', DesignDownloadView.as_view(), name='design-download'),
 ]

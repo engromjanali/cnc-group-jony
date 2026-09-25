@@ -186,9 +186,15 @@ class AdminDesignDeleteView(generics.DestroyAPIView):
         stored_files = [
             f for f in (instance.image_file, instance.design_stored_file) if f is not None
         ]
+        legacy_image = instance.image
+        legacy_file = instance.design_file
         super().perform_destroy(instance)
         for stored_file in stored_files:
             discard(stored_file)
+        if legacy_image:
+            legacy_image.delete(save=False)
+        if legacy_file:
+            legacy_file.delete(save=False)
 
 
 class DesignListView(generics.ListAPIView):

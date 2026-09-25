@@ -15,9 +15,13 @@ User = get_user_model()
 PLAY = 'https://play.google.com/store/apps/details?id=com.jony.cncgroupjony&hl=en'
 APPSTORE = 'https://apps.apple.com/app/cnc-design/id1234567890'
 
-# Every option added since android/iOS: blank value, switched on, until an
-# admin sets it.
+# Every option added: blank value or default, until an admin sets it.
 HELP_SUPPORT_DEFAULTS = {
+    'maintenance_mode': False,
+    'app_version': '1.0.0',
+    'min_supported_version': '1.0.0',
+    'registration_enabled': True,
+    'google_login_enabled': True,
     'help_support_email': '', 'help_support_email_enabled': True,
     'help_support_whatsapp': '', 'help_support_whatsapp_enabled': True,
     'help_support_telegram': '', 'help_support_telegram_enabled': True,
@@ -30,6 +34,7 @@ class SettingTestCase(APITestCase):
     starts from. Has no tests itself."""
 
     def setUp(self):
+        AppSetting.objects.all().delete()
         self.admin = User.objects.create_user('admin@example.com', 'pw-1', is_staff=True)
         self.customer = User.objects.create_user('customer@example.com', 'pw-2')
         self.client.force_authenticate(self.admin)
@@ -99,14 +104,14 @@ class AccessTests(SettingTestCase):
                 self.assertEqual(response.status_code, 405)
         self.assertFalse(AppSetting.objects.exists())
 
-    def test_the_admin_url_only_writes_with_patch(self):
-        for method in ('get', 'post', 'put', 'delete'):
+    def test_the_admin_url_supports_get_and_patch(self):
+        self.assertEqual(self.client.get(reverse('admin-app-setting')).status_code, 200)
+        for method in ('post', 'put', 'delete'):
             with self.subTest(method=method):
                 response = getattr(self.client, method)(reverse('admin-app-setting'))
                 self.assertEqual(response.status_code, 405)
 
     def test_the_paths_are_the_ones_the_app_calls(self):
-        self.assertEqual(reverse('app-setting'), '/api/v1/app-setting')
         self.assertEqual(reverse('admin-app-setting'), '/api/v1/admin/app-setting')
 
 
@@ -608,3 +613,61 @@ class AdminSiteTests(SettingTestCase):
         setting = AppSetting.current()
         self.assertEqual(setting.android_app_url, 'https://example.com/from-admin')
         self.assertEqual(setting.updated_by, self.superuser)
+
+
+class AppControlTests(SettingTestCase):
+    def test_maintenance_mode_can_be_enabled_and_disabled(self):
+        self._saved(maintenance_mode=True)
+        self.assertTrue(AppSetting.current().maintenance_mode)
+
+        self._saved(maintenance_mode=False)
+        self.assertFalse(AppSetting.current().maintenance_mode)
+
+    def test_version_and_min_version_can_be_configured(self):
+        self._saved(app_version='2.1.0', min_supported_version='2.0.0')
+        setting = AppSetting.current()
+        self.assertEqual(setting.app_version, '2.1.0')
+        self.assertEqual(setting.min_supported_version, '2.0.0')
+
+    def test_registration_enabled_can_be_toggled(self):
+        self._saved(registration_enabled=False)
+        self.assertFalse(AppSetting.current().registration_enabled)
+
+        self._saved(registration_enabled=True)
+        self.assertTrue(AppSetting.current().registration_enabled)
+
+    def test_google_login_enabled_can_be_toggled(self):
+        self._saved(google_login_enabled=False)
+        self.assertFalse(AppSetting.current().google_login_enabled)
+
+        self._saved(google_login_enabled=True)
+        self.assertTrue(AppSetting.current().google_login_enabled)
+
+    def test_config_endpoint_reflects_app_settings(self):
+        self._saved(
+            maintenance_mode=True,
+            app_version='3.0.0',
+            min_supported_version='2.5.0',
+            registration_enabled=False,
+            google_login_enabled=False,
+            help_support_email='admin@cncgroupjony.com',
+            help_support_whatsapp='+8801999999999',
+            android_app_url='https://play.google.com/store/apps/details?id=com.cnc',
+            ios_app_url='https://apps.apple.com/app/id123456789',
+        )
+
+        self.client.force_authenticate(None)
+        response = self.client.get(reverse('config'))
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data['maintenance_mode'])
+        self.assertEqual(response.data['version'], '3.0.0')
+        self.assertEqual(response.data['min_supported_version'], '2.5.0')
+        self.assertFalse(response.data['features']['registration_enabled'])
+        self.assertFalse(response.data['features']['social_login_enabled'])
+        self.assertFalse(response.data['features']['google_login_enabled'])
+        self.assertEqual(response.data['support_email'], 'admin@cncgroupjony.com')
+        self.assertEqual(response.data['help_support_email'], 'admin@cncgroupjony.com')
+        self.assertEqual(response.data['help_support_whatsapp'], '+8801999999999')
+        self.assertEqual(response.data['android_app_url'], 'https://play.google.com/store/apps/details?id=com.cnc')
+        self.assertEqual(response.data['ios_app_url'], 'https://apps.apple.com/app/id123456789')
+

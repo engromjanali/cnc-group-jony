@@ -11,6 +11,11 @@ from .serializers import AppSettingSerializer
 # blank, so it never has to handle a different shape.
 NOT_SET_YET = {
     'android_app_url': '', 'ios_app_url': '',
+    'maintenance_mode': False,
+    'app_version': '1.0.0',
+    'min_supported_version': '1.0.0',
+    'registration_enabled': True,
+    'google_login_enabled': True,
     'help_support_email': '', 'help_support_email_enabled': True,
     'help_support_whatsapp': '', 'help_support_whatsapp_enabled': True,
     'help_support_telegram': '', 'help_support_telegram_enabled': True,
@@ -40,15 +45,13 @@ class AppSettingView(APIView):
 
 
 class AdminAppSettingView(APIView):
-    """PATCH /api/v1/admin/app-setting - changes the options.
-
-    JSON body with any of `android_app_url` and `ios_app_url`. Only the ones
-    sent are changed, so a client that does not know a newer option leaves it
-    as it is; a blank (or null) value switches an option off. Answers with the
-    settings as they now are."""
+    """GET/PATCH /api/v1/admin/app-setting - admin reads or changes the options."""
 
     permission_classes = [permissions.IsAdminUser]
     parser_classes = [JSONParser]
+
+    def get(self, request):
+        return self._current()
 
     def patch(self, request):
         serializer = AppSettingSerializer(data=request.data, partial=True)

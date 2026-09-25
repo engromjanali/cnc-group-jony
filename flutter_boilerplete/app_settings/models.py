@@ -22,6 +22,13 @@ class AppSetting(models.Model):
     # Where the iOS app can be installed from - the App Store page or TestFlight.
     ios_app_url = models.CharField(max_length=MAX_URL_LENGTH, blank=True, default='')
 
+    # Maintenance mode, app versioning and registration status
+    maintenance_mode = models.BooleanField(default=False)
+    app_version = models.CharField(max_length=50, blank=True, default='1.0.0')
+    min_supported_version = models.CharField(max_length=50, blank=True, default='1.0.0')
+    registration_enabled = models.BooleanField(default=True)
+    google_login_enabled = models.BooleanField(default=True)
+
     # Help & Support contact channels shown to every user. Each has its own
     # value and its own switch, so an admin can hide a channel without losing
     # the value already saved for it.

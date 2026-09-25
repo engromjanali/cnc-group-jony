@@ -52,6 +52,12 @@ class AppSettingSerializer(serializers.ModelSerializer):
     android_app_url = UrlField()
     ios_app_url = UrlField()
 
+    maintenance_mode = serializers.BooleanField(required=False)
+    app_version = serializers.CharField(required=False, allow_blank=True, max_length=50)
+    min_supported_version = serializers.CharField(required=False, allow_blank=True, max_length=50)
+    registration_enabled = serializers.BooleanField(required=False)
+    google_login_enabled = serializers.BooleanField(required=False)
+
     help_support_email = ContactField(
         validators=[EmailValidator(message='Enter a valid email address.')],
     )
@@ -67,6 +73,8 @@ class AppSettingSerializer(serializers.ModelSerializer):
         model = AppSetting
         fields = (
             'android_app_url', 'ios_app_url',
+            'maintenance_mode', 'app_version', 'min_supported_version',
+            'registration_enabled', 'google_login_enabled',
             'help_support_email', 'help_support_email_enabled',
             'help_support_whatsapp', 'help_support_whatsapp_enabled',
             'help_support_telegram', 'help_support_telegram_enabled',

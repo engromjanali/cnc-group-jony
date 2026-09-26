@@ -43,10 +43,11 @@ class CloudinaryStorageService(StorageService):
             'secure': True,
         }
 
-    def store(self, file, *, owner_id, file_name, content_type):
+    def store(self, file, *, owner_id, file_name, content_type, folder=None, **kwargs):
+        upload_folder = folder or config.CLOUDINARY_DESIGN_FOLDER
         result = cloudinary.uploader.upload(
             file,
-            folder=config.image_folder(owner_id),
+            folder=upload_folder,
             resource_type='image',
             unique_filename=True,
             overwrite=False,

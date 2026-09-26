@@ -40,9 +40,14 @@ class ObjectKeyTests(APITestCase):
     def test_key_is_namespaced_per_user_and_unique(self):
         first = build_object_key(7, 'panel.dxf')
         second = build_object_key(7, 'panel.dxf')
-        self.assertTrue(first.startswith('users/7/'))
+        self.assertTrue(first.startswith('designs-files/'))
         self.assertTrue(first.endswith('-panel.dxf'))
         self.assertNotEqual(first, second)
+
+    def test_key_supports_custom_prefix(self):
+        key = build_object_key(7, 'panel.dxf', prefix='users/7/')
+        self.assertTrue(key.startswith('users/7/'))
+        self.assertTrue(key.endswith('-panel.dxf'))
 
     def test_traversal_and_unsafe_characters_are_stripped(self):
         self.assertEqual(sanitize_file_name('../../etc/passwd'), 'passwd')
@@ -61,14 +66,16 @@ class _FakeProviders:
     def service(self, provider):
         service = MagicMock()
 
-        def store(file, *, owner_id, file_name, content_type):
+        def store(file, *, owner_id, file_name, content_type, folder=None, key_prefix=None, **kwargs):
             if self.fail_on == provider:
                 raise RuntimeError(f'{provider} is down')
             data = file.read()
-            key = (
-                f'users/{owner_id}/images/{next(self._ids)}' if provider == 'cloudinary'
-                else build_object_key(owner_id, file_name)
-            )
+            if provider == 'cloudinary':
+                folder_path = folder or config.CLOUDINARY_DESIGN_FOLDER
+                key = f'{folder_path}/{next(self._ids)}'
+            else:
+                prefix = key_prefix or folder or config.R2_DESIGN_FILE_PREFIX
+                key = build_object_key(owner_id, file_name, prefix=prefix)
             self.stored.append((provider, key, len(data), content_type))
             return UploadedObject(storage_key=key, size=len(data), content_type=content_type)
 
@@ -118,7 +125,8 @@ class AddDesignTests(_ProvidersMixin, APITestCase):
         self.assertEqual(design.design_stored_file.provider, StoredFile.Provider.R2)
         self.assertEqual(design.design_stored_file.status, StoredFile.Status.READY)
         self.assertEqual(design.design_file_name, '07 E.dxf')
-        self.assertTrue(design.design_stored_file.storage_key.startswith(f'users/{self.admin.id}/'))
+        self.assertTrue(design.design_stored_file.storage_key.startswith('designs-files/'))
+        self.assertTrue(design.image_file.storage_key.startswith('cnc/designs/'))
 
         providers = [entry[0] for entry in self.providers.stored]
         self.assertEqual(sorted(providers), ['cloudinary', 'r2'])
@@ -568,6 +576,7 @@ class CategoryTests(_ProvidersMixin, APITestCase):
         self.assertTrue(response.data['can_delete'])
         category = Category.objects.get(pk=response.data['id'])
         self.assertEqual(category.image_file.provider, StoredFile.Provider.CLOUDINARY)
+        self.assertTrue(category.image_file.storage_key.startswith('cnc/categories/'))
         self.assertEqual([p for p, *_ in self.providers.stored], ['cloudinary'])
 
     def test_a_new_category_needs_an_image(self):
@@ -763,3 +772,21 @@ class CategoryTests(_ProvidersMixin, APITestCase):
 
         self.assertTrue(StoredFile.objects.filter(pk=category.image_file_id).exists())
         self.assertFalse(StoredFile.objects.filter(pk=unused.pk).exists())
+
+
+@override_settings(CLOUDINARY_CLOUD_NAME='demo-cloud')
+class UserProfileStorageTests(_ProvidersMixin, APITestCase):
+    def setUp(self):
+        super().setUp()
+        self.user = User.objects.create_user('alice@example.com', 'pw-1')
+        self.client.force_authenticate(self.user)
+
+    def test_upload_avatar_stores_in_user_profiles_folder(self):
+        avatar = _image_file(name='avatar.png')
+        response = self.client.patch(reverse('profile'), {'avatar': avatar}, format='multipart')
+        self.assertEqual(response.status_code, 200, response.data)
+        self.user.refresh_from_db()
+        self.assertIsNotNone(self.user.avatar_file)
+        self.assertEqual(self.user.avatar_file.provider, StoredFile.Provider.CLOUDINARY)
+        self.assertTrue(self.user.avatar_file.storage_key.startswith('cnc/user/profiles/'))
+        self.assertIn('demo-cloud', response.data['avatar_url'])

@@ -49,8 +49,9 @@ class R2StorageService(StorageService):
             config=_BOTO_CONFIG,
         )
 
-    def store(self, file, *, owner_id, file_name, content_type):
-        key = build_object_key(owner_id, file_name)
+    def store(self, file, *, owner_id, file_name, content_type, key_prefix=None, folder=None, **kwargs):
+        prefix = key_prefix or folder or config.R2_DESIGN_FILE_PREFIX
+        key = build_object_key(owner_id, file_name, prefix=prefix)
         # Read whole: uploads are capped at a few MB, and a known length keeps
         # R2 away from streaming/chunked signing it doesn't support.
         body = file.read()

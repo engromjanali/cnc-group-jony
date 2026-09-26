@@ -2,6 +2,7 @@ from django.db import transaction
 from rest_framework import serializers
 
 from designs.serializers import validate_image_upload
+from storage import config as storage_config
 from storage.models import StoredFile
 from storage.services import delivery_url
 from storage.uploads import discard, store_upload
@@ -87,4 +88,5 @@ class BannerSerializer(serializers.ModelSerializer):
         return store_upload(
             self.context['request'].user, StoredFile.Provider.CLOUDINARY, image,
             file_name=image.name, content_type=image.content_type,
+            folder=storage_config.CLOUDINARY_BANNER_FOLDER,
         )

@@ -7,6 +7,7 @@ from rest_framework import serializers
 from rest_framework.exceptions import APIException
 from rest_framework_simplejwt.tokens import RefreshToken
 
+from storage import config as storage_config
 from storage.models import StoredFile
 from storage.services import delivery_url
 from storage.uploads import discard, store_upload
@@ -69,6 +70,7 @@ class UserSerializer(serializers.ModelSerializer):
         stored = store_upload(
             instance, StoredFile.Provider.CLOUDINARY, avatar,
             file_name=avatar.name, content_type=avatar.content_type,
+            folder=storage_config.CLOUDINARY_USER_PROFILE_FOLDER,
         )
         previous = instance.avatar_file if instance.avatar_file_id else None
         try:

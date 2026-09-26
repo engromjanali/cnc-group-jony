@@ -98,6 +98,7 @@ class CategorySerializer(serializers.ModelSerializer):
                 stored = store_upload(
                     self.context['request'].user, StoredFile.Provider.CLOUDINARY, image,
                     file_name=image.name, content_type=image.content_type,
+                    folder=storage_config.CLOUDINARY_CATEGORY_FOLDER,
                 )
                 validated_data['image_file'] = stored
                 if instance is not None and instance.image_file_id:
@@ -252,6 +253,7 @@ class DesignWriteSerializer(serializers.ModelSerializer):
                 stored = store_upload(
                     owner, StoredFile.Provider.CLOUDINARY, image,
                     file_name=image.name, content_type=image.content_type,
+                    folder=storage_config.CLOUDINARY_DESIGN_FOLDER,
                 )
                 uploaded.append(stored)
                 validated_data['image_file'] = stored
@@ -265,6 +267,7 @@ class DesignWriteSerializer(serializers.ModelSerializer):
                 stored = store_upload(
                     owner, StoredFile.Provider.R2, design_file,
                     file_name=design_file.name, content_type=content_type,
+                    key_prefix=storage_config.R2_DESIGN_FILE_PREFIX,
                 )
                 uploaded.append(stored)
                 validated_data['design_stored_file'] = stored

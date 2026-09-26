@@ -39,6 +39,11 @@ def file_extension(name):
     return extension.lower() if '.' in name else ''
 
 
-def build_object_key(user_id, file_name):
-    """users/{userId}/{uuid}-{sanitizedFileName} - always server generated."""
-    return f'{config.file_key_prefix(user_id)}{uuid.uuid4()}-{sanitize_file_name(file_name)}'
+def build_object_key(user_id=None, file_name='', prefix=None):
+    """Storage key for Cloudflare R2 - always server generated.
+    Defaults to config.R2_DESIGN_FILE_PREFIX (e.g. 'designs-files/')."""
+    if prefix is None:
+        prefix = config.R2_DESIGN_FILE_PREFIX
+    elif not prefix.endswith('/'):
+        prefix = f'{prefix}/'
+    return f'{prefix}{uuid.uuid4()}-{sanitize_file_name(file_name)}'

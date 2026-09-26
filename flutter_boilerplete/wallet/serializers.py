@@ -3,6 +3,7 @@ from decimal import Decimal
 from rest_framework import serializers
 
 from designs.serializers import validate_image_upload
+from storage import config as storage_config
 from storage.models import StoredFile
 from storage.services import delivery_url
 from storage.uploads import discard, store_upload
@@ -86,6 +87,7 @@ class PaymentMethodSerializer(serializers.ModelSerializer):
         return store_upload(
             self.context['request'].user, StoredFile.Provider.CLOUDINARY, icon,
             file_name=icon.name, content_type=icon.content_type,
+            folder=storage_config.CLOUDINARY_WALLET_FOLDER,
         )
 
 

@@ -19,9 +19,20 @@ ALLOWED_IMAGE_FORMATS = frozenset({'jpg', 'jpeg', 'png', 'webp', 'gif'})
 # Delivery transformation applied when building display URLs.
 IMAGE_DELIVERY_TRANSFORMATION = 'f_auto,q_auto'
 
+# Cloudinary folders
+CLOUDINARY_DESIGN_FOLDER = 'cnc/designs'
+CLOUDINARY_BANNER_FOLDER = 'cnc/banners'
+CLOUDINARY_CATEGORY_FOLDER = 'cnc/categories'
+CLOUDINARY_USER_PROFILE_FOLDER = 'cnc/user/profiles'
+CLOUDINARY_WALLET_FOLDER = 'cnc/wallet'
 
-def image_folder(user_id):
-    return f'users/{user_id}/images'
+
+def image_folder(user_id=None, folder=None):
+    if folder:
+        return folder
+    if user_id is not None:
+        return f'users/{user_id}/images'
+    return CLOUDINARY_DESIGN_FOLDER
 
 
 # --- Private files (R2) -----------------------------------------------------
@@ -51,9 +62,16 @@ ALLOWED_FILE_EXTENSIONS = frozenset({
 # Downloads are presigned GETs that stop working after this long.
 DOWNLOAD_URL_TTL_SECONDS = 5 * 60
 
+# Cloudflare R2 object key prefix for design files
+R2_DESIGN_FILE_PREFIX = 'designs-files/'
 
-def file_key_prefix(user_id):
-    return f'users/{user_id}/'
+
+def file_key_prefix(user_id=None, prefix=None):
+    if prefix:
+        return prefix if prefix.endswith('/') else f'{prefix}/'
+    if user_id is not None:
+        return f'users/{user_id}/'
+    return R2_DESIGN_FILE_PREFIX
 
 
 # --- Cleanup ------------------------------------------------------------------

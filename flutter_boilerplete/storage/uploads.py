@@ -6,12 +6,13 @@ from .services import get_storage_service
 logger = logging.getLogger(__name__)
 
 
-def store_upload(owner, provider, file, *, file_name, content_type):
+def store_upload(owner, provider, file, *, file_name, content_type, folder=None, key_prefix=None, **kwargs):
     """Uploads `file` to `provider` and records it. If recording fails the
     object is removed again, so nothing is left in storage with no row."""
     service = get_storage_service(provider)
     uploaded = service.store(
         file, owner_id=owner.id, file_name=file_name, content_type=content_type,
+        folder=folder, key_prefix=key_prefix, **kwargs,
     )
     try:
         return StoredFile.objects.create(

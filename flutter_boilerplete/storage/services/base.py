@@ -31,7 +31,7 @@ class StorageService(ABC):
     provider: str
 
     @abstractmethod
-    def store(self, file, *, owner_id, file_name, content_type):
+    def store(self, file, *, owner_id, file_name, content_type, folder=None, key_prefix=None, **kwargs):
         """Upload `file` (a readable file object) for `owner_id` and return an
         `UploadedObject`. The provider picks the storage key, never the client."""
 

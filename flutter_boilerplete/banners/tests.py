@@ -75,6 +75,7 @@ class AddBannerTests(BannerTestCase):
         self.assertEqual(banner.priority, 2)
         self.assertEqual(banner.image_file.provider, StoredFile.Provider.CLOUDINARY)
         self.assertEqual(banner.image_file.status, StoredFile.Status.READY)
+        self.assertTrue(banner.image_file.storage_key.startswith('cnc/banners/'))
         self.assertEqual([p[0] for p in self.providers.stored], ['cloudinary'])
 
         self.assertIn('demo-cloud', response.data['image_url'])

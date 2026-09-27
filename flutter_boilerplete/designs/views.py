@@ -313,10 +313,8 @@ def _payment_required(price, balance):
 class DesignDownloadUrlView(StorageView):
     """GET /api/v1/design/<id>/download-url
 
-    A free design, or a paid one this user already bought, may be downloaded by
-    any logged-in user. A paid design they have **not** bought answers `402`:
-    buy it first with `POST /design/<id>/download`, which is the call that takes
-    the money. Every call signs a new short-lived URL; clients must not keep it."""
+    A free design, or a paid one this user previously purchased, may get a signed URL.
+    An unpurchased paid design answers 402."""
 
     def get(self, request, pk):
         design = get_object_or_404(
@@ -328,29 +326,46 @@ class DesignDownloadUrlView(StorageView):
 
 
 class DesignDownloadView(StorageView):
-    """POST /api/v1/design/<id>/download - download a design, paying for it.
+    """POST /api/v1/design/<id>/download - request download link for a design.
 
-    Call this when the user taps download. A **free** design is not charged. A
-    **paid** one takes its price from the wallet - **once**: downloading it again
-    later, from any device, is free, and a retry or double tap can never charge
-    twice. If the wallet holds less than the price it answers `402` with
-    `required` and `walletBalance`, and nothing is taken.
-
-    A design with no downloadable file is a `404` *before* anything is charged.
-
-    `200` with the signed link (same `downloadUrl` / `fileName` / `expiresIn` as
-    `GET /design/<id>/download-url`) plus `designId`, `charged` (what was taken
-    now), `alreadyPurchased` and `walletBalance` (after the charge)."""
+    Checks that the user has sufficient balance before starting the download.
+    If the wallet holds less than the price it answers 402 with required and
+    walletBalance, taking nothing.
+    Does NOT cut the balance yet; balance is cut upon successful completion
+    via POST /api/v1/design/<id>/complete."""
 
     def post(self, request, pk):
         design = get_object_or_404(
             Design.objects.select_related('design_stored_file'), pk=pk,
         )
-        # Nothing is charged for a file that cannot be downloaded.
+        price = purchases.price_of(design)
+        if price > 0 and request.user.wallet_balance < price:
+            return _payment_required(price, request.user.wallet_balance)
+
         payload = _download_payload(design, request)
 
+        return Response({
+            'designId': design.pk,
+            'charged': '0.00',
+            'price': str(price),
+            'alreadyPurchased': False,
+            'walletBalance': str(request.user.wallet_balance),
+            **payload,
+        })
+
+
+class DesignDownloadCompleteView(StorageView):
+    """POST /api/v1/design/<id>/complete - called after successful download to cut balance.
+
+    Takes the design's price from the user's wallet. Downloading and completing
+    twice cuts the balance two times. Free designs cost nothing."""
+
+    def post(self, request, pk):
+        design = get_object_or_404(
+            Design.objects.select_related('design_stored_file'), pk=pk,
+        )
         try:
-            charged, already_purchased = purchases.charge_for_design(request.user, design)
+            charged = purchases.charge_for_design(request.user, design)
         except purchases.InsufficientBalance as error:
             return _payment_required(error.required, error.balance)
 
@@ -358,7 +373,6 @@ class DesignDownloadView(StorageView):
         return Response({
             'designId': design.pk,
             'charged': str(charged),
-            'alreadyPurchased': already_purchased,
             'walletBalance': str(request.user.wallet_balance),
-            **payload,
         })
+

@@ -686,28 +686,64 @@ class DesignDownloadChargeTests(DesignFixtures):
     def _download(self, design):
         return self.client.post(reverse('design-download', args=[design.pk]))
 
+    def _complete(self, design):
+        return self.client.post(reverse('design-complete', args=[design.pk]))
+
     # --- paying -------------------------------------------------------------------
 
-    def test_a_paid_design_takes_its_price_from_the_wallet_and_hands_over_the_file(self):
+    def test_download_checks_balance_without_cutting_until_complete(self):
         self._fund('120.00')
         design = self._paid(amount='50.00')
 
+        # Download URL request gives the file URL, balance is NOT cut yet.
         response = self._download(design)
-
         self.assertEqual(response.status_code, 200, response.data)
-        self.assertEqual(response.data['charged'], '50.00')
-        self.assertEqual(response.data['walletBalance'], '70.00')
-        self.assertFalse(response.data['alreadyPurchased'])
-        self.assertEqual(response.data['designId'], design.pk)
-        self.assertEqual(response.data['downloadUrl'], self.FILE)
-        self.assertEqual(response.data['fileName'], 'panel.dxf')
+        self.assertEqual(response.data['charged'], '0.00')
+        self.assertEqual(response.data['walletBalance'], '120.00')
+        self.assertEqual(self._balance(), Decimal('120.00'))
+        self.assertEqual(DesignPurchase.objects.count(), 0)
+
+        # Once download succeeds, complete is called: balance is cut now.
+        comp_response = self._complete(design)
+        self.assertEqual(comp_response.status_code, 200)
+        self.assertEqual(comp_response.data['charged'], '50.00')
+        self.assertEqual(comp_response.data['walletBalance'], '70.00')
         self.assertEqual(self._balance(), Decimal('70.00'))
+        self.assertEqual(DesignPurchase.objects.count(), 1)
+
+    def test_failed_download_does_not_cut_balance(self):
+        self._fund('120.00')
+        design = self._paid(amount='50.00')
+
+        # Download started but failed (complete never called).
+        self._download(design)
+        self.assertEqual(self._balance(), Decimal('120.00'))
+        self.assertEqual(DesignPurchase.objects.count(), 0)
+
+    def test_downloading_two_times_cuts_balance_two_times(self):
+        self._fund('120.00')
+        design = self._paid(amount='50.00')
+
+        # First download and complete
+        self._download(design)
+        self._complete(design)
+        self.assertEqual(self._balance(), Decimal('70.00'))
+        self.assertEqual(DesignPurchase.objects.count(), 1)
+
+        # Second download and complete
+        self._download(design)
+        again = self._complete(design)
+        self.assertEqual(again.status_code, 200)
+        self.assertEqual(again.data['charged'], '50.00')
+        self.assertEqual(again.data['walletBalance'], '20.00')
+        self.assertEqual(self._balance(), Decimal('20.00'))
+        self.assertEqual(DesignPurchase.objects.count(), 2)
 
     def test_the_purchase_is_recorded_with_the_price_and_title_at_the_time(self):
         self._fund('100.00')
         design = self._paid(title='Royal Bed', amount='19.99')
 
-        self._download(design)
+        self._complete(design)
 
         purchase = DesignPurchase.objects.get()
         self.assertEqual((purchase.user, purchase.design), (self.customer, design))
@@ -716,7 +752,7 @@ class DesignDownloadChargeTests(DesignFixtures):
     def test_cents_are_exact(self):
         self._fund('20.00')
 
-        response = self._download(self._paid(amount='19.99'))
+        response = self._complete(self._paid(amount='19.99'))
 
         self.assertEqual(response.data['walletBalance'], '0.01')
         self.assertEqual(self._balance(), Decimal('0.01'))
@@ -724,46 +760,19 @@ class DesignDownloadChargeTests(DesignFixtures):
     def test_a_balance_exactly_equal_to_the_price_is_enough(self):
         self._fund('50.00')
 
-        response = self._download(self._paid(amount='50.00'))
+        response = self._complete(self._paid(amount='50.00'))
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(self._balance(), Decimal('0.00'))
-
-    # --- once only ----------------------------------------------------------------
-
-    def test_downloading_again_is_free(self):
-        self._fund('120.00')
-        design = self._paid(amount='50.00')
-
-        self._download(design)
-        again = self._download(design)
-
-        self.assertEqual(again.status_code, 200)
-        self.assertEqual(again.data['charged'], '0.00')
-        self.assertTrue(again.data['alreadyPurchased'])
-        self.assertEqual(again.data['walletBalance'], '70.00')
-        self.assertEqual(DesignPurchase.objects.count(), 1)
-        self.assertEqual(self._balance(), Decimal('70.00'))
-
-    def test_a_price_change_neither_recharges_nor_locks_out_the_owner(self):
-        self._fund('100.00')
-        design = self._paid(amount='50.00')
-        self._download(design)
-
-        Design.objects.filter(pk=design.pk).update(amount=Decimal('80.00'))
-        again = self._download(design)
-
-        self.assertEqual(again.data['charged'], '0.00')
-        self.assertEqual(self._balance(), Decimal('50.00'))
 
     def test_each_user_pays_for_themselves(self):
         self._fund('100.00')
         self._fund('100.00', self.admin)
         design = self._paid(amount='30.00')
 
-        self._download(design)
+        self._complete(design)
         self.client.force_authenticate(self.admin)
-        second = self._download(design)
+        second = self._complete(design)
 
         self.assertEqual(second.data['charged'], '30.00')
         self.assertEqual(DesignPurchase.objects.count(), 2)
@@ -773,7 +782,7 @@ class DesignDownloadChargeTests(DesignFixtures):
     def test_a_purchase_survives_the_design_being_deleted(self):
         self._fund('100.00')
         design = self._paid(title='Royal Bed', amount='50.00')
-        self._download(design)
+        self._complete(design)
 
         design.delete()
 
@@ -802,8 +811,8 @@ class DesignDownloadChargeTests(DesignFixtures):
         first = self._paid('First', '50.00')
         second = self._paid('Second', '50.00')
 
-        self.assertEqual(self._download(first).status_code, 200)
-        refused = self._download(second)
+        self.assertEqual(self._complete(first).status_code, 200)
+        refused = self._complete(second)
 
         self.assertEqual(refused.status_code, 402)
         self.assertEqual(refused.data['walletBalance'], '10.00')
@@ -819,6 +828,8 @@ class DesignDownloadChargeTests(DesignFixtures):
         response = self._download(design)
 
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(self._balance(), Decimal('60.00'))
+        self._complete(design)
         self.assertEqual(self._balance(), Decimal('10.00'))
 
     # --- free designs and missing files -------------------------------------------
@@ -862,7 +873,11 @@ class DesignDownloadChargeTests(DesignFixtures):
 
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.data['downloadUrl'].startswith('https://r2.example/'))
-        self.assertEqual(response.data['charged'], '50.00')
+        self.assertEqual(response.data['charged'], '0.00')
+
+        comp = self._complete(design)
+        self.assertEqual(comp.status_code, 200)
+        self.assertEqual(comp.data['charged'], '50.00')
 
     # --- access -------------------------------------------------------------------
 
@@ -896,7 +911,7 @@ class DesignDownloadChargeTests(DesignFixtures):
     def test_the_download_url_works_once_the_design_is_bought(self):
         self._fund('100.00')
         design = self._paid()
-        self._download(design)
+        self._complete(design)
 
         response = self.client.get(reverse('design-download-url', args=[design.pk]))
 

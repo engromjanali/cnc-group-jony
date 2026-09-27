@@ -80,12 +80,9 @@ class Design(models.Model):
 
 
 class DesignPurchase(models.Model):
-    """A paid design a user has bought with their wallet - the record that they
-    may download it, and the ledger of what they were charged.
-
-    One per (user, design): buying again is free. The price is copied here, so a
-    later price change neither re-charges the owner nor rewrites history, and the
-    design's title too, so the record survives the design being deleted."""
+    """A paid design a user has bought with their wallet - the ledger of what
+    they were charged. Each successful download logs a purchase and cuts the
+    amount from the user's account."""
 
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL, related_name='design_purchases', on_delete=models.CASCADE,
@@ -99,9 +96,6 @@ class DesignPurchase(models.Model):
 
     class Meta:
         ordering = ('-created_at', '-id')
-        constraints = [
-            models.UniqueConstraint(fields=('user', 'design'), name='one_purchase_per_design'),
-        ]
 
     def __str__(self):
         return f'{self.user_id} bought {self.design_title} for {self.amount}'

@@ -11,6 +11,7 @@ from .views import (
     AdminSubCategoryCreateView,
     CategoryListView,
     DesignDetailView,
+    DesignDownloadCompleteView,
     DesignDownloadUrlView,
     DesignDownloadView,
     DesignListView,
@@ -44,4 +45,10 @@ urlpatterns = [
         name='design-download-url',
     ),
     path('design/<int:pk>/download', DesignDownloadView.as_view(), name='design-download'),
+    path('design/<int:pk>/complete', DesignDownloadCompleteView.as_view(), name='design-complete'),
+    path(
+        'design/<int:pk>/confirm-download',
+        DesignDownloadCompleteView.as_view(),
+        name='design-confirm-download',
+    ),
 ]

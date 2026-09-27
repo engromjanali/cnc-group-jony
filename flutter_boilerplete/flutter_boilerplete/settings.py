@@ -133,19 +133,30 @@ WSGI_APPLICATION = 'flutter_boilerplete.wsgi.application'
 # conn_max_age is 0 on serverless: every invocation may be a fresh instance, and
 # holding connections open exhausts the server's connection limit. Point
 # DATABASE_URL at your provider's *pooled* endpoint instead.
-DATABASE_URL = os.environ.get('DATABASE_URL')
-DATABASE_USES_POSTGRES = bool(
-    DATABASE_URL and DATABASE_URL.lower().startswith(('postgres://', 'postgresql://'))
-)
+import sys
 
-DATABASES = {
-    'default': dj_database_url.config(
-        default=f'sqlite:///{BASE_DIR / "db.sqlite3"}',
-        conn_max_age=0 if ON_VERCEL else 600,
-        conn_health_checks=True,
-        ssl_require=ON_VERCEL and DATABASE_USES_POSTGRES,
+if 'test' in sys.argv:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': ':memory:',
+        }
+    }
+    DATABASE_USES_POSTGRES = False
+else:
+    DATABASE_URL = os.environ.get('DATABASE_URL')
+    DATABASE_USES_POSTGRES = bool(
+        DATABASE_URL and DATABASE_URL.lower().startswith(('postgres://', 'postgresql://'))
     )
-}
+
+    DATABASES = {
+        'default': dj_database_url.config(
+            default=f'sqlite:///{BASE_DIR / "db.sqlite3"}',
+            conn_max_age=0 if ON_VERCEL else 600,
+            conn_health_checks=True,
+            ssl_require=ON_VERCEL and DATABASE_USES_POSTGRES,
+        )
+    }
 
 
 AUTH_USER_MODEL = 'accounts.User'

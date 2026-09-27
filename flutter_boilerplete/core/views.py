@@ -4,13 +4,16 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from app_settings.models import AppSetting
+from wallet.models import PaymentMethod
+from wallet.serializers import PaymentMethodSerializer
 
 
 class ConfigView(APIView):
     """GET /api/v1/config - bootstrap payload the client fetches before login.
 
     Reads dynamic app settings saved by admin (maintenance mode, minimum version,
-    recommended version, registration status, store urls, support email).
+    recommended version, registration status, store urls, support email)
+    and active payment methods for wallet funding.
     """
 
     authentication_classes = []
@@ -18,6 +21,11 @@ class ConfigView(APIView):
 
     def get(self, request):
         setting = AppSetting.current()
+        active_payment_methods = PaymentMethodSerializer(
+            PaymentMethod.objects.filter(is_active=True).select_related('icon_file'),
+            many=True,
+            context={'request': request},
+        ).data
         return Response({
             'app_name': 'Cnc Group Jony',
             'api_version': 'v1',
@@ -42,5 +50,6 @@ class ConfigView(APIView):
             'help_support_phone_enabled': setting.help_support_phone_enabled if setting is not None else True,
             'allowed_image_extensions': setting.allowed_image_extensions if setting and setting.allowed_image_extensions else 'jpg, jpeg, png, webp, gif',
             'allowed_file_extensions': setting.allowed_file_extensions if setting and setting.allowed_file_extensions else 'pdf, zip, svg, dxf, dwg, nc, tap, gcode, cnc, plt, ai, eps',
+            'payment_methods': active_payment_methods,
             'debug': settings.DEBUG,
         })

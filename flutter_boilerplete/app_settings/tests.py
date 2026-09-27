@@ -9,6 +9,7 @@ from rest_framework.test import APITestCase
 
 from .limits import MAX_URL_LENGTH
 from .models import AppSetting
+from wallet.models import PaymentMethod
 
 User = get_user_model()
 
@@ -705,5 +706,18 @@ class AppControlTests(SettingTestCase):
         self.assertEqual(config_res.status_code, 200)
         self.assertEqual(config_res.data['allowed_image_extensions'], 'png, webp')
         self.assertEqual(config_res.data['allowed_file_extensions'], 'dxf, gcode')
+
+    def test_config_includes_active_payment_methods(self):
+        PaymentMethod.objects.create(name='bKash', number='01700000000', is_active=True)
+        PaymentMethod.objects.create(name='Nagad', number='01800000000', is_active=False)
+
+        self.client.force_authenticate(None)
+        response = self.client.get(reverse('config'))
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('payment_methods', response.data)
+        methods = response.data['payment_methods']
+        self.assertEqual(len(methods), 1)
+        self.assertEqual(methods[0]['name'], 'bKash')
+        self.assertEqual(methods[0]['number'], '01700000000')
 
 

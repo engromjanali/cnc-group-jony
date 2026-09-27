@@ -16,6 +16,8 @@ NOT_SET_YET = {
     'min_supported_version': '1.0.0',
     'registration_enabled': True,
     'google_login_enabled': True,
+    'allowed_image_extensions': 'jpg, jpeg, png, webp, gif',
+    'allowed_file_extensions': 'pdf, zip, svg, dxf, dwg, nc, tap, gcode, cnc, plt, ai, eps',
     'help_support_email': '', 'help_support_email_enabled': True,
     'help_support_whatsapp': '', 'help_support_whatsapp_enabled': True,
     'help_support_telegram': '', 'help_support_telegram_enabled': True,

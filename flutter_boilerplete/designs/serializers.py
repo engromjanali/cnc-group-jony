@@ -175,9 +175,11 @@ class DesignWriteSerializer(serializers.ModelSerializer):
         return validate_image_upload(image)
 
     def validate_design_file(self, design_file):
+        from app_settings.models import AppSetting
         extension = file_extension(sanitize_file_name(design_file.name))
-        if extension not in storage_config.ALLOWED_FILE_EXTENSIONS:
-            allowed = ', '.join(sorted(storage_config.ALLOWED_FILE_EXTENSIONS))
+        allowed_files = AppSetting.get_current_allowed_file_extensions()
+        if extension not in allowed_files:
+            allowed = ', '.join(sorted(allowed_files))
             raise serializers.ValidationError(f'Unsupported file type. Allowed: {allowed}.')
         return design_file
 

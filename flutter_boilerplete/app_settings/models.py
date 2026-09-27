@@ -29,6 +29,14 @@ class AppSetting(models.Model):
     registration_enabled = models.BooleanField(default=True)
     google_login_enabled = models.BooleanField(default=True)
 
+    # Allowed file and image extensions (comma-separated, e.g. "jpg, jpeg, png, webp, gif")
+    allowed_image_extensions = models.CharField(
+        max_length=255, blank=True, default='jpg, jpeg, png, webp, gif',
+    )
+    allowed_file_extensions = models.CharField(
+        max_length=500, blank=True, default='pdf, zip, svg, dxf, dwg, nc, tap, gcode, cnc, plt, ai, eps',
+    )
+
     # Help & Support contact channels shown to every user. Each has its own
     # value and its own switch, so an admin can hide a channel without losing
     # the value already saved for it.
@@ -72,3 +80,43 @@ class AppSetting(models.Model):
     def current(cls):
         """The saved settings, or None until an admin has saved any."""
         return cls.objects.filter(pk=cls.SINGLETON_PK).first()
+
+    @staticmethod
+    def _parse_extensions(raw_value, default_set, is_image=False):
+        if not raw_value or not raw_value.strip():
+            return frozenset(default_set)
+        result = set()
+        for item in raw_value.split(','):
+            cleaned = item.strip().lstrip('.').lower()
+            if cleaned:
+                result.add(cleaned)
+                if is_image:
+                    if cleaned == 'jpg':
+                        result.add('jpeg')
+                    elif cleaned == 'jpeg':
+                        result.add('jpg')
+        return frozenset(result) if result else frozenset(default_set)
+
+    def get_allowed_image_extensions(self):
+        from storage import config as storage_config
+        return self._parse_extensions(self.allowed_image_extensions, storage_config.ALLOWED_IMAGE_FORMATS, is_image=True)
+
+    def get_allowed_file_extensions(self):
+        from storage import config as storage_config
+        return self._parse_extensions(self.allowed_file_extensions, storage_config.ALLOWED_FILE_EXTENSIONS, is_image=False)
+
+    @classmethod
+    def get_current_allowed_image_extensions(cls):
+        setting = cls.current()
+        if setting is not None:
+            return setting.get_allowed_image_extensions()
+        from storage import config as storage_config
+        return storage_config.ALLOWED_IMAGE_FORMATS
+
+    @classmethod
+    def get_current_allowed_file_extensions(cls):
+        setting = cls.current()
+        if setting is not None:
+            return setting.get_allowed_file_extensions()
+        from storage import config as storage_config
+        return storage_config.ALLOWED_FILE_EXTENSIONS

@@ -22,6 +22,8 @@ HELP_SUPPORT_DEFAULTS = {
     'min_supported_version': '1.0.0',
     'registration_enabled': True,
     'google_login_enabled': True,
+    'allowed_image_extensions': 'jpg, jpeg, png, webp, gif',
+    'allowed_file_extensions': 'pdf, zip, svg, dxf, dwg, nc, tap, gcode, cnc, plt, ai, eps',
     'help_support_email': '', 'help_support_email_enabled': True,
     'help_support_whatsapp': '', 'help_support_whatsapp_enabled': True,
     'help_support_telegram': '', 'help_support_telegram_enabled': True,
@@ -670,4 +672,38 @@ class AppControlTests(SettingTestCase):
         self.assertEqual(response.data['help_support_whatsapp'], '+8801999999999')
         self.assertEqual(response.data['android_app_url'], 'https://play.google.com/store/apps/details?id=com.cnc')
         self.assertEqual(response.data['ios_app_url'], 'https://apps.apple.com/app/id123456789')
+
+    def test_allowed_extensions_settings_and_validation(self):
+        # Default before saving
+        self.assertIn('jpg', AppSetting.get_current_allowed_image_extensions())
+        self.assertIn('dxf', AppSetting.get_current_allowed_file_extensions())
+
+        # Update via admin endpoint
+        response = self._patch(
+            allowed_image_extensions='png, webp',
+            allowed_file_extensions='dxf, gcode',
+        )
+        self.assertEqual(response.status_code, 200)
+        setting = AppSetting.current()
+        self.assertEqual(setting.allowed_image_extensions, 'png, webp')
+        self.assertEqual(setting.allowed_file_extensions, 'dxf, gcode')
+
+        # Normalization and aliasing
+        allowed_img = setting.get_allowed_image_extensions()
+        self.assertIn('png', allowed_img)
+        self.assertIn('webp', allowed_img)
+        self.assertNotIn('jpg', allowed_img)
+
+        allowed_files = setting.get_allowed_file_extensions()
+        self.assertIn('dxf', allowed_files)
+        self.assertIn('gcode', allowed_files)
+        self.assertNotIn('pdf', allowed_files)
+
+        # Config endpoint reflects changes
+        self.client.force_authenticate(None)
+        config_res = self.client.get(reverse('config'))
+        self.assertEqual(config_res.status_code, 200)
+        self.assertEqual(config_res.data['allowed_image_extensions'], 'png, webp')
+        self.assertEqual(config_res.data['allowed_file_extensions'], 'dxf, gcode')
+
 

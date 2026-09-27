@@ -11,13 +11,27 @@ _UNSAFE_CHARS = re.compile(r'[^A-Za-z0-9._-]+')
 
 def validate_image_upload(image):
     """Shared by every serializer that accepts an image file for Cloudinary."""
+    from app_settings.models import AppSetting
+    allowed_images = AppSetting.get_current_allowed_image_extensions()
+
     # Pillow has already opened it, so this is the file's real format rather
     # than whatever the client claimed.
     image_format = (getattr(getattr(image, 'image', None), 'format', '') or '').lower()
-    if image_format not in config.ALLOWED_IMAGE_FORMATS:
+    if image_format not in allowed_images:
+        allowed_str = ', '.join(sorted(allowed_images)).upper()
         raise serializers.ValidationError(
-            f'Unsupported image format: {image_format or "unknown"}. Use JPG, PNG, WebP or GIF.',
+            f'Unsupported image format: {image_format or "unknown"}. Use {allowed_str}.',
         )
+
+    name = getattr(image, 'name', '') or ''
+    if '.' in name:
+        ext = file_extension(sanitize_file_name(name))
+        if ext and ext not in allowed_images:
+            allowed_str = ', '.join(sorted(allowed_images))
+            raise serializers.ValidationError(
+                f'Unsupported image extension: .{ext}. Allowed: {allowed_str}.',
+            )
+
     if image.size > config.MAX_DESIGN_UPLOAD_BYTES:
         limit_mb = config.MAX_DESIGN_UPLOAD_BYTES / (1024 * 1024)
         raise serializers.ValidationError(

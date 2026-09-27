@@ -40,5 +40,7 @@ class ConfigView(APIView):
             'help_support_telegram_enabled': setting.help_support_telegram_enabled if setting is not None else True,
             'help_support_phone': setting.help_support_phone if setting else '',
             'help_support_phone_enabled': setting.help_support_phone_enabled if setting is not None else True,
+            'allowed_image_extensions': setting.allowed_image_extensions if setting and setting.allowed_image_extensions else 'jpg, jpeg, png, webp, gif',
+            'allowed_file_extensions': setting.allowed_file_extensions if setting and setting.allowed_file_extensions else 'pdf, zip, svg, dxf, dwg, nc, tap, gcode, cnc, plt, ai, eps',
             'debug': settings.DEBUG,
         })

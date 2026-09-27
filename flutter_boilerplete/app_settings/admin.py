@@ -11,6 +11,9 @@ class AppSettingAdmin(admin.ModelAdmin):
         ('App install links', {
             'fields': ('android_app_url', 'ios_app_url'),
         }),
+        ('Supported Extensions', {
+            'fields': ('allowed_image_extensions', 'allowed_file_extensions'),
+        }),
         ('Help & Support', {
             'fields': (
                 ('help_support_email', 'help_support_email_enabled'),

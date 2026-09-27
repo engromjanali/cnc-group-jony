@@ -58,6 +58,9 @@ class AppSettingSerializer(serializers.ModelSerializer):
     registration_enabled = serializers.BooleanField(required=False)
     google_login_enabled = serializers.BooleanField(required=False)
 
+    allowed_image_extensions = serializers.CharField(required=False, allow_blank=True, max_length=255)
+    allowed_file_extensions = serializers.CharField(required=False, allow_blank=True, max_length=500)
+
     help_support_email = ContactField(
         validators=[EmailValidator(message='Enter a valid email address.')],
     )
@@ -69,12 +72,25 @@ class AppSettingSerializer(serializers.ModelSerializer):
     help_support_phone = ContactField()
     help_support_phone_enabled = serializers.BooleanField(required=False)
 
+    def validate_allowed_image_extensions(self, value):
+        if not value:
+            return ''
+        parts = [p.strip().lstrip('.').lower() for p in value.split(',') if p.strip()]
+        return ', '.join(parts)
+
+    def validate_allowed_file_extensions(self, value):
+        if not value:
+            return ''
+        parts = [p.strip().lstrip('.').lower() for p in value.split(',') if p.strip()]
+        return ', '.join(parts)
+
     class Meta:
         model = AppSetting
         fields = (
             'android_app_url', 'ios_app_url',
             'maintenance_mode', 'app_version', 'min_supported_version',
             'registration_enabled', 'google_login_enabled',
+            'allowed_image_extensions', 'allowed_file_extensions',
             'help_support_email', 'help_support_email_enabled',
             'help_support_whatsapp', 'help_support_whatsapp_enabled',
             'help_support_telegram', 'help_support_telegram_enabled',

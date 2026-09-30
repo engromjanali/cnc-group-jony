@@ -8,8 +8,9 @@ from django.utils import timezone
 from rest_framework.test import APITestCase
 
 from .limits import MAX_CONTENT_LENGTH, MAX_TITLE_LENGTH
-from .models import PrivacyPolicy
+from .models import PrivacyPolicy, TermsAndConditions
 from .serializers import visible_text
+
 
 User = get_user_model()
 
@@ -401,3 +402,58 @@ class AdminSiteTests(PolicyTestCase):
         policy = PrivacyPolicy.current()
         self.assertEqual(policy.title, 'Edited in the admin')
         self.assertEqual(policy.updated_by, self.superuser)
+
+
+class TermsAndConditionsTestCase(APITestCase):
+    def setUp(self):
+        self.admin = User.objects.create_user('admin-tc@example.com', 'pw-1', is_staff=True)
+        self.customer = User.objects.create_user('customer-tc@example.com', 'pw-2')
+        self.client.force_authenticate(self.admin)
+
+    def _get(self):
+        return self.client.get(reverse('terms-and-conditions'))
+
+    def _put(self, data=None, **fields):
+        body = {**BODY, 'title': 'Terms & Conditions', **fields} if data is None else data
+        return self.client.put(reverse('admin-terms-and-conditions'), body, format='json')
+
+    def _written(self, **fields):
+        response = self._put(**fields)
+        self.assertEqual(response.status_code, 200, response.data)
+        return TermsAndConditions.current()
+
+    def test_reading_needs_login(self):
+        self.client.force_authenticate(None)
+        self.assertEqual(self._get().status_code, 401)
+
+    def test_authenticated_user_can_read(self):
+        self._written()
+        self.client.force_authenticate(self.customer)
+        response = self._get()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['title'], 'Terms & Conditions')
+
+    def test_unwritten_reads_blank(self):
+        self.client.force_authenticate(self.customer)
+        response = self._get()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data, {'title': '', 'content': '', 'updated_at': None})
+
+    def test_customer_cannot_write(self):
+        self.client.force_authenticate(self.customer)
+        self.assertEqual(self._put().status_code, 403)
+        self.assertFalse(TermsAndConditions.objects.exists())
+
+    def test_admin_can_write_and_update(self):
+        doc = self._written(title='First Terms')
+        self.assertEqual(doc.title, 'First Terms')
+        self.assertEqual(doc.updated_by, self.admin)
+
+        doc2 = self._written(title='Second Terms')
+        self.assertEqual(doc2.title, 'Second Terms')
+        self.assertEqual(TermsAndConditions.objects.count(), 1)
+
+    def test_paths_match_reverse(self):
+        self.assertEqual(reverse('terms-and-conditions'), '/api/v1/terms-and-conditions')
+        self.assertEqual(reverse('admin-terms-and-conditions'), '/api/v1/admin/terms-and-conditions')
+

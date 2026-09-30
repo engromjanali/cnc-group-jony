@@ -48,3 +48,47 @@ class PrivacyPolicy(models.Model):
     def current(cls):
         """The saved policy, or None until an admin has written one."""
         return cls.objects.filter(pk=cls.SINGLETON_PK).first()
+
+
+class TermsAndConditions(models.Model):
+    """The app's terms and conditions - one document, written by an admin.
+
+    There is only ever one row: it always has [SINGLETON_PK] as its id, the
+    database refuses any other, and saving a new instance replaces the existing
+    document instead of adding a second one."""
+
+    SINGLETON_PK = 1
+
+    title = models.CharField(max_length=MAX_TITLE_LENGTH)
+    # HTML, as the app's rich-text editor writes it; the app renders it.
+    content = models.TextField()
+    updated_at = models.DateTimeField(auto_now=True)
+    # Who saved it last. Kept as a record only: deleting that account leaves
+    # the document in place.
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, related_name='+', on_delete=models.SET_NULL,
+        null=True, blank=True,
+    )
+
+    class Meta:
+        verbose_name = 'terms and conditions'
+        verbose_name_plural = 'terms and conditions'
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(pk=1), name='terms_and_conditions_is_a_single_document',
+            ),
+        ]
+
+    def __str__(self):
+        return self.title
+
+    def save(self, *args, **kwargs):
+        self.pk = self.SINGLETON_PK
+        kwargs.pop('force_insert', None)
+        super().save(*args, **kwargs)
+
+    @classmethod
+    def current(cls):
+        """The saved terms and conditions, or None until an admin has written one."""
+        return cls.objects.filter(pk=cls.SINGLETON_PK).first()
+

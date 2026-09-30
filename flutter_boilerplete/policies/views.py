@@ -4,8 +4,8 @@ from rest_framework.parsers import JSONParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import PrivacyPolicy
-from .serializers import PrivacyPolicySerializer
+from .models import PrivacyPolicy, TermsAndConditions
+from .serializers import PrivacyPolicySerializer, TermsAndConditionsSerializer
 
 
 # What a client gets before any policy has been written: the same three fields,
@@ -52,3 +52,44 @@ class AdminPrivacyPolicyView(APIView):
                 },
             )
         return Response(PrivacyPolicySerializer(policy).data)
+
+
+class TermsAndConditionsView(APIView):
+    """GET /api/v1/terms-and-conditions - the terms and conditions any signed-in user can read.
+
+    Until an admin has written one it is still a 200, with blank `title` and
+    `content` and a null `updated_at`."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        doc = TermsAndConditions.current()
+        if doc is None:
+            return Response(NOT_WRITTEN_YET)
+        return Response(TermsAndConditionsSerializer(doc).data)
+
+
+class AdminTermsAndConditionsView(APIView):
+    """PUT /api/v1/admin/terms-and-conditions - writes the terms and conditions.
+
+    JSON body `{"title": ..., "content": ...}`, both required. It creates the
+    document the first time and replaces it after that, and answers with what
+    was saved."""
+
+    permission_classes = [permissions.IsAdminUser]
+    parser_classes = [JSONParser]
+
+    def put(self, request):
+        serializer = TermsAndConditionsSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        with transaction.atomic():
+            doc, _ = TermsAndConditions.objects.update_or_create(
+                pk=TermsAndConditions.SINGLETON_PK,
+                defaults={
+                    **serializer.validated_data,
+                    'updated_by': request.user,
+                },
+            )
+        return Response(TermsAndConditionsSerializer(doc).data)
+

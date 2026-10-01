@@ -15,6 +15,7 @@ urlpatterns = [
     path('api/v1/', include('storage.urls')),
     path('api/v1/', include('wallet.urls')),
     path('api/v1/', include('favorites.urls')),
+    path('api/v1/', include('faqs.urls')),
 ]
 
 if settings.DEBUG:

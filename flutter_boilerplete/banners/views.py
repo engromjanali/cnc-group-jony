@@ -35,7 +35,7 @@ class AdminBannerListView(generics.ListAPIView):
 class AdminBannerAddView(StorageErrorsMixin, generics.CreateAPIView):
     """POST /api/v1/admin/banner/add
 
-    Multipart fields: title, image (file, required), and optionally cta_label,
+    Multipart fields: image (file, required), and optionally title, cta_label,
     category, is_active, priority, start_at, end_at. At most 10 banners can
     exist; beyond that it returns 409 without uploading anything."""
 

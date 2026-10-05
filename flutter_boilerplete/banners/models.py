@@ -25,7 +25,7 @@ class Banner(models.Model):
         SCHEDULED = 'scheduled', 'Scheduled'
         EXPIRED = 'expired', 'Expired'
 
-    title = models.CharField(max_length=100)
+    title = models.CharField(max_length=100, blank=True, default='')
     # Cloudinary picture. Always set through the API; nullable in the database
     # only because the file row is unlinked (not the banner deleted) if it is
     # ever reclaimed.

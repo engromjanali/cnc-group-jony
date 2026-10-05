@@ -147,6 +147,12 @@ def _firebase_app():
         return _app
 
 
+def firebase_app():
+    """The shared Admin SDK app, for other Firebase services (push
+    notifications). Raises `FirebaseNotConfigured` without a service account."""
+    return _firebase_app()
+
+
 def verify_firebase_token(token):
     """Returns the token's claims, or raises:
 

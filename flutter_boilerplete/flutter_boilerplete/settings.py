@@ -43,7 +43,7 @@ DEBUG = os.environ.get('DJANGO_DEBUG', 'False' if ON_VERCEL else 'True') == 'Tru
 # Allow all hosts (Vercel, local Flutter Web/mobile apps)
 ALLOWED_HOSTS = ['*']
 
-CSRF_TRUSTED_ORIGINS = ['https://*.vercel.app', 'http://localhost', 'http://127.0.0.1']
+CSRF_TRUSTED_ORIGINS = ['https://*.vercel.app', 'http://localhost', 'http://127.0.0.1', 'http://192.168.0.107']
 
 # CORS configuration to allow Flutter Web and cross-origin clients
 CORS_ALLOW_ALL_ORIGINS = True
@@ -90,6 +90,7 @@ INSTALLED_APPS = [
     'wallet',
     'favorites',
     'faqs',
+    'notifications',
 ]
 
 MIDDLEWARE = [

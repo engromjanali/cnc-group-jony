@@ -112,11 +112,13 @@ class AddBannerTests(BannerTestCase):
         self.assertIn('image', response.data)
         self.assertEqual(Banner.objects.count(), 0)
 
-    def test_a_new_banner_needs_a_title(self):
-        response = self._add(title='')
-        self.assertEqual(response.status_code, 400)
-        self.assertIn('title', response.data)
-        self.assertEqual(self.providers.stored, [])
+    def test_a_new_banner_can_have_a_blank_or_omitted_title(self):
+        for title in ('', '   ', None):
+            with self.subTest(title=title):
+                response = self._add(title=title)
+                self.assertEqual(response.status_code, 201, response.data)
+                self.assertEqual(response.data['title'], '')
+                self.assertEqual(Banner.objects.get(pk=response.data['id']).title, '')
 
     def test_a_file_that_is_not_an_image_is_rejected(self):
         fake = SimpleUploadedFile('banner.png', b'not really a picture', content_type='image/png')
@@ -227,6 +229,28 @@ class BannerLimitTests(BannerTestCase):
 
 
 class EditBannerTests(BannerTestCase):
+    def test_an_empty_title_clears_the_existing_title(self):
+        banner = self._banner_via_api()
+
+        response = self._patch(banner, title='')
+
+        self.assertEqual(response.status_code, 200, response.data)
+        banner.refresh_from_db()
+        self.assertEqual(banner.title, '')
+
+    def test_an_omitted_title_is_preserved_on_put_and_patch(self):
+        banner = self._banner_via_api()
+
+        for method in (self.client.put, self.client.patch):
+            with self.subTest(method=method.__name__):
+                response = method(
+                    reverse('admin-banner-update', args=[banner.id]),
+                    {'cta_label': 'View'}, format='multipart',
+                )
+                self.assertEqual(response.status_code, 200, response.data)
+                banner.refresh_from_db()
+                self.assertEqual(banner.title, 'Eid sale')
+
     def test_editing_keeps_the_image_when_none_is_sent(self):
         banner = self._banner_via_api()
         image = banner.image_file

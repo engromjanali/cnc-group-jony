@@ -22,6 +22,9 @@ class AppSettingAdmin(admin.ModelAdmin):
                 ('help_support_phone', 'help_support_phone_enabled'),
             ),
         }),
+        ('Wallet', {
+            'fields': ('wallet_warning_text', 'wallet_offer_text'),
+        }),
         (None, {
             'fields': ('updated_at', 'updated_by'),
         }),

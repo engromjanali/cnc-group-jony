@@ -96,5 +96,6 @@ class AppSettingSerializer(serializers.ModelSerializer):
             'help_support_telegram', 'help_support_telegram_enabled',
             'help_support_phone', 'help_support_phone_enabled',
             'updated_at',
+            'wallet_warning_text', 'wallet_offer_text',
         )
         read_only_fields = ('updated_at',)

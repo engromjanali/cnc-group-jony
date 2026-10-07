@@ -29,6 +29,7 @@ HELP_SUPPORT_DEFAULTS = {
     'help_support_whatsapp': '', 'help_support_whatsapp_enabled': True,
     'help_support_telegram': '', 'help_support_telegram_enabled': True,
     'help_support_phone': '', 'help_support_phone_enabled': True,
+    'wallet_warning_text': '', 'wallet_offer_text': '',
 }
 
 
@@ -173,6 +174,32 @@ class ReadingTests(SettingTestCase):
 
 
 class WritingTests(SettingTestCase):
+    def test_wallet_messages_are_public_and_can_be_cleared_independently(self):
+        self._saved(
+            wallet_warning_text='  Check the number before sending.  ',
+            wallet_offer_text='Add 500 and receive a bonus.\nLimited offer.',
+            help_support_email='support@example.com',
+        )
+        self.client.force_authenticate(None)
+        data = self._get().data
+        self.assertEqual(data['wallet_warning_text'], 'Check the number before sending.')
+        self.assertEqual(data['wallet_offer_text'], 'Add 500 and receive a bonus.\nLimited offer.')
+        self.assertNotIn('updated_by', data)
+
+        self.client.force_authenticate(self.customer)
+        self.assertEqual(self._patch(wallet_offer_text='Changed').status_code, 403)
+        self.client.force_authenticate(self.admin)
+        self._saved(wallet_warning_text='')
+        setting = AppSetting.current()
+        self.assertEqual(setting.wallet_warning_text, '')
+        self.assertEqual(setting.wallet_offer_text, data['wallet_offer_text'])
+        self.assertEqual(setting.help_support_email, 'support@example.com')
+
+    def test_wallet_message_length_is_bounded(self):
+        for field in ('wallet_warning_text', 'wallet_offer_text'):
+            self.assertEqual(self._patch(**{field: 'a' * 2000}).status_code, 200)
+            self.assertEqual(self._patch(**{field: 'a' * 2001}).status_code, 400)
+
     def test_the_first_save_creates_it_and_says_what_is_set(self):
         response = self._patch(android_app_url=PLAY, ios_app_url=APPSTORE)
 
@@ -719,5 +746,4 @@ class AppControlTests(SettingTestCase):
         self.assertEqual(len(methods), 1)
         self.assertEqual(methods[0]['name'], 'bKash')
         self.assertEqual(methods[0]['number'], '01700000000')
-
 

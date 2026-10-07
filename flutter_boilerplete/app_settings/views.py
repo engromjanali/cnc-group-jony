@@ -23,6 +23,7 @@ NOT_SET_YET = {
     'help_support_telegram': '', 'help_support_telegram_enabled': True,
     'help_support_phone': '', 'help_support_phone_enabled': True,
     'updated_at': None,
+    'wallet_warning_text': '', 'wallet_offer_text': '',
 }
 
 

@@ -49,6 +49,9 @@ class AppSetting(models.Model):
     help_support_phone = models.CharField(max_length=MAX_CONTACT_LENGTH, blank=True, default='')
     help_support_phone_enabled = models.BooleanField(default=True)
 
+    wallet_warning_text = models.CharField(max_length=2000, blank=True, default='')
+    wallet_offer_text = models.CharField(max_length=2000, blank=True, default='')
+
     updated_at = models.DateTimeField(auto_now=True)
     # Who saved it last. Kept as a record only: deleting that account leaves
     # the settings in place.

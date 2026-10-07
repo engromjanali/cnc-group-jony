@@ -631,16 +631,24 @@ class SetPasswordTests(APITestCase):
         self.user.refresh_from_db()
         self.assertFalse(self.user.password_set)
 
-    def test_a_weak_password_is_refused(self):
-        for weak in ('short', '12345678', 'password'):
+    def test_a_short_password_is_refused(self):
+        for weak in ('short', '12345', ''):
             response = self._set(weak)
             self.assertEqual(response.status_code, 400, weak)
 
         self.user.refresh_from_db()
         self.assertFalse(self.user.password_set)
 
-    def test_a_password_like_the_email_is_refused(self):
-        self.assertEqual(self._set('new.person@gmail.com').status_code, 400)
+    def test_simple_passwords_are_allowed_and_hashed(self):
+        for password in ('123456', 'password', 'new.person@gmail.com'):
+            with self.subTest(password=password):
+                self.user.set_unusable_password()
+                self.user.password_set = False
+                self.user.save()
+                self.assertEqual(self._set(password).status_code, 200)
+                self.user.refresh_from_db()
+                self.assertTrue(self.user.check_password(password))
+                self.assertNotEqual(self.user.password, password)
 
     def test_it_cannot_replace_an_existing_password(self):
         self._set()
@@ -664,12 +672,13 @@ class SetPasswordTests(APITestCase):
 class PasswordSetFlagTests(APITestCase):
     def test_register_marks_the_password_as_set(self):
         response = self.client.post('/api/v1/auth/register', {
-            'email': 'reg@example.com', 'password': 'Correct-Horse-Battery-9',
-            'password_confirm': 'Correct-Horse-Battery-9',
+            'email': 'reg@example.com', 'password': '123456',
+            'password_confirm': '123456',
         })
 
         self.assertEqual(response.status_code, 201)
         self.assertTrue(response.data['user']['password_set'])
+        self.assertTrue(User.objects.get(email='reg@example.com').check_password('123456'))
 
     def test_an_account_made_without_a_password_is_not_marked(self):
         self.assertFalse(User.objects.create_user('nopw@example.com').password_set)
@@ -900,11 +909,11 @@ class PasswordResetTests(APITestCase):
 
         self.assertEqual(response.status_code, 400)
 
-    def test_a_weak_password_is_refused_without_using_up_the_code(self):
+    def test_a_short_password_is_refused_without_using_up_the_code(self):
         self._forgot()
         code = self._code()
 
-        for weak in ('short', '12345678', 'password'):
+        for weak in ('short', '12345', ''):
             self.assertEqual(self._reset(code, weak).status_code, 400, weak)
         self.assertEqual(self._reset(code, confirmation='Different-Pass-99').status_code, 400)
 
@@ -914,10 +923,15 @@ class PasswordResetTests(APITestCase):
         self.assertEqual(row.attempts, 0)
         self.assertEqual(self._reset(code).status_code, 200)
 
-    def test_a_password_like_the_email_is_refused(self):
-        self._forgot()
-
-        self.assertEqual(self._reset(self._code(), 'jane@example.com').status_code, 400)
+    def test_simple_passwords_are_allowed_and_hashed(self):
+        for password in ('123456', 'password', 'jane@example.com'):
+            with self.subTest(password=password):
+                self._age_codes(created_at=timezone.now() - timedelta(minutes=2))
+                self._forgot()
+                self.assertEqual(self._reset(self._code(), password).status_code, 200)
+                self.jane.refresh_from_db()
+                self.assertTrue(self.jane.check_password(password))
+                self.assertNotEqual(self.jane.password, password)
 
     def test_the_accounts_sessions_are_signed_out(self):
         login = self.client.post(

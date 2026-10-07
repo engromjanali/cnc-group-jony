@@ -261,8 +261,6 @@ class SetPasswordSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 {'password_confirmation': 'Passwords do not match.'},
             )
-        # Also refuses one too close to the email/name, which is why it needs
-        # the user.
         validate_password(attrs['password'], user=user)
         return attrs
 

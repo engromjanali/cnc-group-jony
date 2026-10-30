@@ -15,12 +15,12 @@ NOT_WRITTEN_YET = {'title': '', 'content': '', 'updated_at': None}
 
 
 class PrivacyPolicyView(APIView):
-    """GET /api/v1/privacy-policy - the policy any signed-in user can read.
+    """GET /api/v1/privacy-policy - the policy anyone can read.
 
     Until an admin has written one it is still a 200, with blank `title` and
     `content` and a null `updated_at`."""
 
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.AllowAny]
 
     def get(self, request):
         policy = PrivacyPolicy.current()
@@ -55,12 +55,12 @@ class AdminPrivacyPolicyView(APIView):
 
 
 class TermsAndConditionsView(APIView):
-    """GET /api/v1/terms-and-conditions - the terms and conditions any signed-in user can read.
+    """GET /api/v1/terms-and-conditions - the terms and conditions anyone can read.
 
     Until an admin has written one it is still a 200, with blank `title` and
     `content` and a null `updated_at`."""
 
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.AllowAny]
 
     def get(self, request):
         doc = TermsAndConditions.current()

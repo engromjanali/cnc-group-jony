@@ -43,9 +43,12 @@ class PolicyTestCase(APITestCase):
 
 
 class AccessTests(PolicyTestCase):
-    def test_reading_needs_a_login(self):
+    def test_reading_is_public(self):
+        self._written()
         self.client.force_authenticate(None)
-        self.assertEqual(self._get().status_code, 401)
+        response = self._get()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(set(response.data), {'title', 'content', 'updated_at'})
 
     def test_any_signed_in_user_can_read_it_not_only_admins(self):
         self._written()
@@ -422,9 +425,12 @@ class TermsAndConditionsTestCase(APITestCase):
         self.assertEqual(response.status_code, 200, response.data)
         return TermsAndConditions.current()
 
-    def test_reading_needs_login(self):
+    def test_reading_is_public(self):
+        self._written()
         self.client.force_authenticate(None)
-        self.assertEqual(self._get().status_code, 401)
+        response = self._get()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(set(response.data), {'title', 'content', 'updated_at'})
 
     def test_authenticated_user_can_read(self):
         self._written()

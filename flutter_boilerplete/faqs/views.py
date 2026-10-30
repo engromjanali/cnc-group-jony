@@ -11,7 +11,7 @@ class FaqListView(generics.ListAPIView):
 
     queryset = Faq.objects.filter(is_active=True)
     serializer_class = FaqSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.AllowAny]
     pagination_class = None
 
 

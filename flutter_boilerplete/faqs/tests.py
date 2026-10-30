@@ -36,9 +36,25 @@ class FaqTestCase(APITestCase):
 
 
 class AccessTests(FaqTestCase):
-    def test_reading_needs_a_login(self):
+    def test_reading_is_public_and_hides_inactive_faqs(self):
+        self._added(question='Public')
+        self._added(question='Hidden', is_active=False)
         self.client.force_authenticate(None)
-        self.assertEqual(self.client.get(reverse('faq-list')).status_code, 401)
+        response = self.client.get(reverse('faq-list'))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([item['question'] for item in response.data], ['Public'])
+
+    def test_guests_cannot_use_admin_endpoints(self):
+        faq = self._added()
+        self.client.force_authenticate(None)
+        self.assertEqual(self.client.get(reverse('admin-faq-list')).status_code, 401)
+        self.assertEqual(self._add().status_code, 401)
+        self.assertEqual(self.client.patch(
+            reverse('admin-faq-update', args=[faq.pk]), {'question': 'Defaced'}, format='json',
+        ).status_code, 401)
+        self.assertEqual(self.client.delete(reverse('admin-faq-delete', args=[faq.pk])).status_code, 401)
+        faq.refresh_from_db()
+        self.assertEqual(faq.question, BODY['question'])
 
     def test_any_signed_in_user_can_read_the_list(self):
         self._added()

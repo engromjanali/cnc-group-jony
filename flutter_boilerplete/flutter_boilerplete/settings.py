@@ -248,8 +248,8 @@ STORAGES = {
 
 # External file storage (see storage/ app). Designs are added in one multipart
 # request and this backend uploads the files itself, so the credentials below
-# only ever live here. Requests are capped at ~4.5 MB by Vercel, which is why
-# storage.config.MAX_DESIGN_UPLOAD_BYTES is set just under it.
+# only ever live here. The upload size limit is controlled by
+# storage.config.MAX_DESIGN_UPLOAD_BYTES (currently 30 MB).
 
 # Public preview images: uploaded to Cloudinary with the API secret.
 CLOUDINARY_CLOUD_NAME = os.environ.get('CLOUDINARY_CLOUD_NAME', '')

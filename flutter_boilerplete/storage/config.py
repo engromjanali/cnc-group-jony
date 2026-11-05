@@ -5,11 +5,14 @@ here rather than defining their own."""
 # --- Upload limits ------------------------------------------------------------
 
 # File bytes now pass through this backend (one multipart request adds a whole
-# design), and Vercel rejects any request body over 4.5 MB with a 413 before
-# Django ever sees it. The image and design file together must fit, so this is
-# checked here first - with a readable message, and the same way locally as in
-# production - and leaves headroom for the multipart framing and form fields.
-MAX_DESIGN_UPLOAD_BYTES = 4 * 1024 * 1024
+# design). The image and design file together must fit within this limit, so
+# this is checked here first - with a readable message, and the same way
+# locally as in production - and leaves headroom for the multipart framing
+# and form fields.
+# NOTE: If deploying on Vercel, its default request body limit is 4.5 MB.
+# To support 30 MB uploads you must configure `maxDuration` / body size limit
+# in vercel.json (Pro/Enterprise plan required for limits above 4.5 MB).
+MAX_DESIGN_UPLOAD_BYTES = 30 * 1024 * 1024
 
 # --- Public preview images (Cloudinary) -------------------------------------
 

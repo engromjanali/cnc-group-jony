@@ -171,6 +171,17 @@ class AddDesignTests(_ProvidersMixin, APITestCase):
         response = self._add(design_type='4d')
         self.assertEqual(response.status_code, 400)
 
+    def test_image_larger_than_4mb_is_rejected(self):
+        from rest_framework import serializers
+        from storage.validators import validate_image_upload
+        f = _image_file()
+        f.image = Image.new('RGB', (8, 8))
+        f.image.format = 'PNG'
+        f.size = 4 * 1024 * 1024 + 1
+        with self.assertRaises(serializers.ValidationError) as ctx:
+            validate_image_upload(f)
+        self.assertIn('limit is 4 MB', str(ctx.exception))
+
     def test_a_paid_design_needs_an_amount(self):
         response = self._add(is_paid=True)
         self.assertEqual(response.status_code, 400)

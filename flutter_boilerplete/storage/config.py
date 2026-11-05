@@ -10,9 +10,9 @@ here rather than defining their own."""
 # locally as in production - and leaves headroom for the multipart framing
 # and form fields.
 # NOTE: If deploying on Vercel, its default request body limit is 4.5 MB.
-# To support 30 MB uploads you must configure `maxDuration` / body size limit
-# in vercel.json (Pro/Enterprise plan required for limits above 4.5 MB).
+# Images are capped at 4 MB to ensure they always fit within Vercel's limit.
 MAX_DESIGN_UPLOAD_BYTES = 30 * 1024 * 1024
+MAX_IMAGE_UPLOAD_BYTES = 4 * 1024 * 1024
 
 # --- Public preview images (Cloudinary) -------------------------------------
 

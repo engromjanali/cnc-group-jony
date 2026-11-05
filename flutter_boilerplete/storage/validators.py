@@ -32,8 +32,8 @@ def validate_image_upload(image):
                 f'Unsupported image extension: .{ext}. Allowed: {allowed_str}.',
             )
 
-    if image.size > config.MAX_DESIGN_UPLOAD_BYTES:
-        limit_mb = config.MAX_DESIGN_UPLOAD_BYTES / (1024 * 1024)
+    if image.size > config.MAX_IMAGE_UPLOAD_BYTES:
+        limit_mb = config.MAX_IMAGE_UPLOAD_BYTES / (1024 * 1024)
         raise serializers.ValidationError(
             f'The image is {image.size / (1024 * 1024):.1f} MB; the limit is {limit_mb:g} MB.',
         )

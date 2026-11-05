@@ -149,6 +149,7 @@ class DesignWriteSerializer(serializers.ModelSerializer):
     sub_category_label = serializers.CharField(required=False, allow_blank=True, write_only=True)
     image = serializers.ImageField(write_only=True, required=False)
     design_file = serializers.FileField(write_only=True, required=False)
+    design_stored_file_id = serializers.UUIDField(required=False, write_only=True, allow_null=True)
     # Declared explicitly (rather than left to ModelSerializer's auto field):
     # for multipart data, DRF's BooleanField treats a missing key as an
     # unchecked HTML checkbox and reads it as False unless the field carries
@@ -168,6 +169,7 @@ class DesignWriteSerializer(serializers.ModelSerializer):
             'design_type', 'is_paid', 'amount',
             'image', 'image_url',
             'design_file', 'design_file_url', 'design_file_name',
+            'design_stored_file_id',
             'description',
         )
 
@@ -208,6 +210,25 @@ class DesignWriteSerializer(serializers.ModelSerializer):
         if not has_image:
             raise serializers.ValidationError({'image': 'Provide an image file or an image_url.'})
 
+        stored_file_id = attrs.pop('design_stored_file_id', None)
+        if stored_file_id is not None:
+            user = self.context['request'].user
+            try:
+                stored = StoredFile.objects.get(
+                    id=stored_file_id,
+                    provider=StoredFile.Provider.R2,
+                    status=StoredFile.Status.READY,
+                )
+                if not user.is_staff and stored.owner_id != user.id:
+                    raise StoredFile.DoesNotExist
+            except StoredFile.DoesNotExist:
+                raise serializers.ValidationError({
+                    'design_stored_file_id': 'Invalid or incomplete stored file.'
+                })
+            attrs['design_stored_file'] = stored
+            if not attrs.get('design_file_name'):
+                attrs['design_file_name'] = stored.original_name
+
         uploads = [f for f in (attrs.get('image'), attrs.get('design_file')) if f]
         total = sum(f.size for f in uploads)
         if total > storage_config.MAX_DESIGN_UPLOAD_BYTES:
@@ -247,6 +268,7 @@ class DesignWriteSerializer(serializers.ModelSerializer):
         owner = self.context['request'].user
         image = validated_data.pop('image', None)
         design_file = validated_data.pop('design_file', None)
+        pre_stored = validated_data.pop('design_stored_file', None)
 
         uploaded = []  # removed again if the save fails
         replaced = []  # removed once the new state is saved
@@ -262,7 +284,11 @@ class DesignWriteSerializer(serializers.ModelSerializer):
                 if instance is not None and instance.image_file_id:
                     replaced.append(instance.image_file)
 
-            if design_file is not None:
+            if pre_stored is not None:
+                validated_data['design_stored_file'] = pre_stored
+                if instance is not None and instance.design_stored_file_id and instance.design_stored_file_id != pre_stored.id:
+                    replaced.append(instance.design_stored_file)
+            elif design_file is not None:
                 content_type = design_file.content_type
                 if content_type not in storage_config.ALLOWED_FILE_CONTENT_TYPES:
                     content_type = 'application/octet-stream'

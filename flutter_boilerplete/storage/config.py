@@ -65,6 +65,12 @@ ALLOWED_FILE_EXTENSIONS = frozenset({
 # Downloads are presigned GETs that stop working after this long.
 DOWNLOAD_URL_TTL_SECONDS = 5 * 60
 
+# Uploads are presigned PUTs directly to R2 that expire after this long (15 mins).
+UPLOAD_URL_TTL_SECONDS = 15 * 60
+
+# Max direct upload size for cutting files (up to 50 MB, safely bypassing Vercel limits).
+MAX_DIRECT_UPLOAD_BYTES = 50 * 1024 * 1024
+
 # Cloudflare R2 object key prefix for design files
 R2_DESIGN_FILE_PREFIX = 'designs-files/'
 

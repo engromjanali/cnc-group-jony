@@ -1,36 +1,40 @@
-# R2 CORS - optional, not applied
+# R2 CORS Configuration
 
-**You do not need this to add designs.** The backend uploads files to R2
-itself, so no browser ever sends a file to R2 and there is nothing for CORS to
-block on upload.
+For the **presigned upload system**, Flutter clients (especially Flutter Web) upload large cutting files (up to 40 MB - 50 MB) directly to Cloudflare R2 using HTTP `PUT`.
 
-It only matters for one case: the **Flutter web app downloading** a design's
-cutting file. The app fetches the file from a short-lived signed R2 link. If
-the browser blocks that (no CORS rule on the bucket), the app already falls
-back to opening the link in a new tab, where the user can save it - so
-downloads still work, just less smoothly. Android/iOS are never affected.
+To allow browser uploads and downloads, Cloudflare R2 needs CORS configured.
 
-`r2-cors.json` allows `GET` from the listed origins so the web download can
-stay in-page. **It has not been applied to the bucket.**
+### Applying CORS to R2
 
-## Before applying
+In the Cloudflare dashboard:
+1. Go to **R2** -> Select your bucket (`cnc`) -> **Settings** -> **CORS Policy**.
+2. Add / Edit CORS policy and paste:
 
-1. Replace `https://cncgroupjony.web.app` if that isn't the real deployed
-   origin. `http://localhost:55915` was the `flutter run -d chrome` origin when
-   this was written - Flutter picks a **random** port each run unless you pin
-   one (`flutter run -d chrome --web-port 55915`).
-2. `origins` and `methods` are the two fields Cloudflare's docs confirm for
-   this file shape. Check the dashboard (R2 -> bucket -> Settings -> CORS
-   Policy) or `wrangler r2 bucket cors set --help` before adding anything else
-   rather than guessing field names.
-
-## Applying it
-
+```json
+[
+  {
+    "AllowedOrigins": [
+      "https://cncgroupjony.web.app",
+      "http://localhost:55915",
+      "http://localhost:*"
+    ],
+    "AllowedMethods": [
+      "GET",
+      "PUT",
+      "HEAD"
+    ],
+    "AllowedHeaders": [
+      "*"
+    ],
+    "ExposeHeaders": [
+      "ETag"
+    ],
+    "MaxAgeSeconds": 3600
+  }
+]
 ```
-wrangler r2 bucket cors set cnc --file r2-cors.json
+
+Or using Wrangler CLI:
+```bash
+wrangler r2 bucket cors set <bucket-name> --file r2-cors.json
 ```
-
-or paste the `rules` into the Cloudflare dashboard: **R2 -> cnc -> Settings ->
-CORS Policy**.
-
-Never set `origins` to `*` on a private bucket.

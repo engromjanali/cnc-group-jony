@@ -47,3 +47,7 @@ class StorageService(ABC):
     def url_for(self, storage_key, download_name=None):
         """A URL a client can fetch the object from. Private providers return
         a short-lived signed URL, so never persist the result."""
+
+    def presigned_upload_url(self, storage_key, content_type=None, expires_in=None):
+        """A signed URL a client can PUT file bytes directly to."""
+        raise NotImplementedError(f'{self.__class__.__name__} does not support presigned uploads.')

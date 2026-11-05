@@ -82,3 +82,15 @@ class R2StorageService(StorageService):
             Params=params,
             ExpiresIn=config.DOWNLOAD_URL_TTL_SECONDS,
         )
+
+    def presigned_upload_url(self, storage_key, content_type=None, expires_in=None):
+        if expires_in is None:
+            expires_in = config.UPLOAD_URL_TTL_SECONDS
+        params = {'Bucket': self._bucket, 'Key': storage_key}
+        if content_type:
+            params['ContentType'] = content_type
+        return self._client.generate_presigned_url(
+            'put_object',
+            Params=params,
+            ExpiresIn=expires_in,
+        )

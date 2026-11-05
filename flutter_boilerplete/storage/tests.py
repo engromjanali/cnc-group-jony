@@ -18,7 +18,7 @@ from designs.models import Category, Design, SubCategory
 from . import config
 from .cleanup import run_cleanup
 from .models import StoredFile
-from .services import UploadedObject
+from .services import StoredObject, UploadedObject
 from .validators import build_object_key, sanitize_file_name
 
 User = get_user_model()
@@ -82,6 +82,10 @@ class _FakeProviders:
         service.store.side_effect = store
         service.delete.side_effect = lambda key: self.deleted.append((provider, key))
         service.url_for.return_value = f'https://{provider}.example/signed'
+        service.presigned_upload_url.side_effect = (
+            lambda key, content_type=None, expires_in=None: f'https://{provider}.example/upload/{key}'
+        )
+        service.describe.return_value = StoredObject(size=40 * 1024 * 1024, content_type='application/dxf')
         return service
 
 
@@ -94,6 +98,11 @@ class _ProvidersMixin:
         )
         patcher.start()
         self.addCleanup(patcher.stop)
+        views_patcher = patch(
+            'storage.views.get_storage_service', side_effect=self.providers.service,
+        )
+        views_patcher.start()
+        self.addCleanup(views_patcher.stop)
 
 
 @override_settings(CLOUDINARY_CLOUD_NAME='demo-cloud')
@@ -790,3 +799,131 @@ class UserProfileStorageTests(_ProvidersMixin, APITestCase):
         self.assertEqual(self.user.avatar_file.provider, StoredFile.Provider.CLOUDINARY)
         self.assertTrue(self.user.avatar_file.storage_key.startswith('cnc/user/profiles/'))
         self.assertIn('demo-cloud', response.data['avatar_url'])
+
+
+@override_settings(CLOUDINARY_CLOUD_NAME='demo-cloud')
+class PresignedUploadTests(_ProvidersMixin, APITestCase):
+    def setUp(self):
+        super().setUp()
+        self.user = User.objects.create_user('alice@example.com', 'pw-1')
+        self.client.force_authenticate(self.user)
+
+    def test_presign_success_creates_pending_stored_file(self):
+        url = reverse('storage-upload-presign')
+        response = self.client.post(
+            url,
+            {
+                'file_name': 'frame_3d.dxf',
+                'file_size': 40 * 1024 * 1024,
+                'content_type': 'application/dxf',
+            },
+            format='json',
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertIn('file_id', response.data)
+        self.assertIn('upload_url', response.data)
+        self.assertTrue(response.data['upload_url'].startswith('https://r2.example/upload/'))
+        self.assertEqual(response.data['expires_in'], config.UPLOAD_URL_TTL_SECONDS)
+
+        stored = StoredFile.objects.get(id=response.data['file_id'])
+        self.assertEqual(stored.owner, self.user)
+        self.assertEqual(stored.provider, StoredFile.Provider.R2)
+        self.assertEqual(stored.status, StoredFile.Status.PENDING)
+        self.assertEqual(stored.original_name, 'frame_3d.dxf')
+        self.assertEqual(stored.size, 40 * 1024 * 1024)
+
+    def test_presign_rejects_unsupported_extension(self):
+        url = reverse('storage-upload-presign')
+        response = self.client.post(
+            url,
+            {
+                'file_name': 'malicious.exe',
+                'file_size': 1024,
+            },
+            format='json',
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('file_name', response.data)
+
+    def test_presign_rejects_file_exceeding_max_limit(self):
+        url = reverse('storage-upload-presign')
+        response = self.client.post(
+            url,
+            {
+                'file_name': 'huge.dxf',
+                'file_size': config.MAX_DIRECT_UPLOAD_BYTES + 1024,
+            },
+            format='json',
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('file_size', response.data)
+
+    def test_complete_upload_marks_file_ready(self):
+        stored = StoredFile.objects.create(
+            owner=self.user,
+            provider=StoredFile.Provider.R2,
+            storage_key='designs-files/test.dxf',
+            original_name='test.dxf',
+            content_type='application/dxf',
+            size=1000,
+            status=StoredFile.Status.PENDING,
+        )
+
+        url = reverse('storage-upload-complete')
+        response = self.client.post(url, {'file_id': str(stored.id)}, format='json')
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data['status'], 'ready')
+
+        stored.refresh_from_db()
+        self.assertEqual(stored.status, StoredFile.Status.READY)
+        self.assertEqual(stored.size, 40 * 1024 * 1024)
+
+    def test_complete_upload_is_idempotent(self):
+        stored = StoredFile.objects.create(
+            owner=self.user,
+            provider=StoredFile.Provider.R2,
+            storage_key='designs-files/test.dxf',
+            original_name='test.dxf',
+            content_type='application/dxf',
+            size=1000,
+            status=StoredFile.Status.READY,
+        )
+
+        url = reverse('storage-upload-complete')
+        response = self.client.post(url, {'file_id': str(stored.id)}, format='json')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['status'], 'ready')
+
+
+@override_settings(CLOUDINARY_CLOUD_NAME='demo-cloud')
+class DesignWithPreStoredR2FileTests(_ProvidersMixin, APITestCase):
+    def setUp(self):
+        super().setUp()
+        self.admin = User.objects.create_user('admin@example.com', 'pw-1', is_staff=True)
+        self.category = Category.objects.create(label='CNC Parts')
+        self.client.force_authenticate(self.admin)
+
+    def test_create_design_with_pre_stored_r2_file_bypasses_multipart_limit(self):
+        stored = StoredFile.objects.create(
+            owner=self.admin,
+            provider=StoredFile.Provider.R2,
+            storage_key='designs-files/panel-40mb.dxf',
+            original_name='panel-40mb.dxf',
+            content_type='application/dxf',
+            size=40 * 1024 * 1024,
+            status=StoredFile.Status.READY,
+        )
+
+        data = {
+            'category': self.category.id,
+            'title': '40MB Heavy Panel',
+            'image': _image_file(),
+            'design_stored_file_id': str(stored.id),
+        }
+        response = self.client.post(reverse('admin-design-add'), data, format='multipart')
+        self.assertEqual(response.status_code, 201, response.data)
+
+        design = Design.objects.get(title='40MB Heavy Panel')
+        self.assertEqual(design.design_stored_file, stored)
+        self.assertEqual(design.design_file_name, 'panel-40mb.dxf')
+        self.assertIsNotNone(design.design_stored_file_id)

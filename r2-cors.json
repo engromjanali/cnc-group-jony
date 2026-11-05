@@ -4,9 +4,11 @@
       "allowed": {
         "origins": [
           "https://cncgroupjony.web.app",
-          "http://localhost:55915"
+          "http://localhost:55915",
+          "http://localhost:*"
         ],
-        "methods": ["GET"]
+        "methods": ["GET", "PUT", "HEAD"],
+        "headers": ["*"]
       }
     }
   ]
